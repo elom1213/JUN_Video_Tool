@@ -1,0 +1,25 @@
+{
+  "python": {"min": "3.11", "max_exclusive": "3.14"},
+  "pip": {"requirements": "requirements.txt", "dev_requirements": "requirements-dev.txt"},
+  "binaries": [
+    {
+      "name": "ffmpeg",
+      "install_dir": "bin",
+      "files": ["ffmpeg.exe", "ffprobe.exe"],
+      "verify_cmd": ["ffmpeg.exe", "-version"],
+      "sources": [
+        {
+          "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+          "sha256_url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256",
+          "members_glob": "*/bin/{name}"
+        },
+        {
+          "url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+          "sha256_url": null,
+          "members_glob": "*/bin/{name}"
+        }
+      ],
+      "pip_fallback": "imageio-ffmpeg"
+    }
+  ]
+}

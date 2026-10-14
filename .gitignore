@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+bin/
+dist/
+build/
+*.spec
+docs/.obsidian/
+*.log

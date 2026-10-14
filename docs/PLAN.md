@@ -2,7 +2,9 @@
 
 - **Author**: Ji Hun Park (Junny / `Dnable_JunnyPark`)
 - **작성일**: 2026-10-14
-- **상태**: 코드 작성 전 설계 확정본. 이 문서만 보고 코드를 작성할 수 있는 수준을 목표로 한다.
+- **상태**: 설계 확정본 → **v0.1.0 구현 완료 (2026-10-14)**. P0~P9 전 단계 구현. 유닛 테스트 35개 통과,
+  합성 영상으로 헤드리스 end-to-end(프로브 → 썸네일 → 샘플 추정 → 병렬 변환 → 목표 용량 재시도) 검증 완료.
+  Windows 10 실기 체크리스트(12.3)는 미수행 — Win10 머신이 생기면 수행한다.
 - **대상 환경**: **Windows 10 (21H2 이상) 과 Windows 11 양쪽**, Python 3.11, PySide6 6.x (개발 PC 는 Win11 + 6.11.1), ffmpeg (별도 확보 — 4장). 호환 규칙은 12장
 
 ---
@@ -779,7 +781,8 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | `pick_sample_ranges(FrameRange(0, 899), 30, 15, n=2, out_frames_each=24)` | 2개, 각 48 src 프레임, 중심 ≈ 225 / 675 |
 | `pick_sample_ranges(FrameRange(0, 59), 30, 15, …)` | `[FrameRange(0, 59)]` (샘플이 70% 넘음 → 전체) |
 | `scale_sample([40_000, 60_000], [24, 24], 450)` | `800 + round(100_000/48 * 450)` = `938_300` |
-| `heuristic_size` (300 frames, 640x360, 144 colors, bayer) | `800 + 300*640*360*(0.08+0.42*144/256)*1.0` = `21_859_200` (≈ 20.8 MB, `human_size` 는 1024 기준) |
+| `heuristic_size` (300 frames, 640x360, 144 colors, bayer) | `800 + 300*640*360*(0.08+0.42*144/256)*1.0` = `21_860_000` (≈ 20.8 MB, `human_size` 는 1024 기준) |
+| 반올림 규칙 | 표의 `round` 는 **.5 올림**(`floor(x+0.5)`). Python `round()` 는 은행가 반올림이라 q=50 에서 fps 17 이 나오므로 쓰지 않는다 |
 | `make_output_path("a.mp4", None, "_gif", ".gif", overwrite=False)` (a_gif.gif 존재) | `a_gif_001.gif` |
 | `make_output_path("a.mp4", Path("out"), "", ".gif", overwrite=True)` | `out/a.gif` |
 | `eval_fraction("30000/1001")` | `29.97…` ; `eval_fraction("0/0")` → `0.0` |
