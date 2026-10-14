@@ -30,6 +30,7 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 | R6 | 압축률로 출력 파일 크기 조절 | `Quality` 슬라이더(1~100) → fps 상한 · 팔레트 색 수 · 디더링 매핑. 선택적으로 `Target size (MB)` 지정 시 반복 재인코딩으로 크기 맞춤 |
 | R7 | 변환 구간을 **프레임 단위**로 지정 | 항목별 `FrameRange(start_frame, end_frame)`. 범위 슬라이더(듀얼 핸들) + 스핀박스 + 시작/끝 프레임 미리보기. "체크된 모든 항목에 적용" 버튼 |
 | R8 | 지금은 GIF 만, 나중에 다른 포맷 | `BaseConverter` 추상 클래스 + `ConverterRegistry`. UI 는 레지스트리에서 포맷 콤보를 채우고, 포맷별 옵션 패널을 팩토리로 생성 |
+| R9 | 출력 GIF 의 fps 를 사용자가 지정 | `FPS` 모드 콤보 `Auto (from quality)` / `Source` / `Custom`. Custom 이면 QDoubleSpinBox(1~60) 값을 사용. 어떤 모드든 원본 fps 를 넘지 않게 상한 적용 |
 
 ### 1.2 비기능 요구
 
@@ -343,7 +344,8 @@ class GifOptions(ConvertOptions):
     lock_aspect: bool = True
     anchor: str = "width"               # lock 시 기준 축. UI 가 마지막 편집 축을 기록
     quality: int = 70                   # 1~100
-    fps_override: float | None = None   # None → quality 매핑으로 fps 결정
+    fps_mode: str = "auto"              # "auto" (quality 매핑) | "source" (원본 fps) | "custom"
+    fps_custom: float = 15.0            # fps_mode == "custom" 일 때 사용 (1~60)
     loop: int = 0                       # 0 = 무한 반복
     target_size_mb: float | None = None # None → 비활성
     max_attempts: int = 5
@@ -365,7 +367,17 @@ class GifParams:                        # 품질 매핑 결과
 | `dither` | q<40 → `none` ; 40~75 → `bayer:bayer_scale=3` ; >75 → `sierra2_4a` | none | bayer | sierra2_4a |
 | `stats_mode` | q>75 → `diff` ; 그 외 `full` | full | full | diff |
 
-- `fps_override` 가 있으면 fps 공식만 대체한다 (`min(src_fps, fps_override)`).
+**출력 fps 결정** (`gif_converter.resolve_fps(options: GifOptions, src_fps: float) -> float`)
+
+| `fps_mode` | 결과 |
+|------------|------|
+| `"auto"` | 위 표의 품질 매핑 값 `min(src_fps, 5 + round(q * 0.25))` |
+| `"source"` | `src_fps` 그대로 (원본 프레임 전부 유지) |
+| `"custom"` | `min(src_fps, fps_custom)` — 원본보다 높게 지정해도 프레임을 만들어 내지 않는다 |
+
+- `gif_params_for_quality` 는 fps 를 계산해 돌려주지만, `build_command` 는 최종 fps 를 항상 `resolve_fps` 로 받는다 (매핑 함수의 fps 는 `auto` 모드에서만 쓰임).
+- fps 가 소스보다 낮으면 ffmpeg `fps` 필터가 프레임을 드롭한다. 구간 길이(초)는 그대로이므로 출력 GIF 프레임 수는 `round(dur_sec * fps)` 가 된다. 이 값을 옵션 패널 힌트와 Frame Range 패널의 `"→ N GIF frames"` 표기로 보여 준다.
+- `validate`: `fps_mode == "custom"` 이고 `fps_custom` 이 1~60 범위 밖이면 `"Custom FPS must be between 1 and 60."`.
 
 **명령 생성** (`build_command`)
 
@@ -386,7 +398,8 @@ ffmpeg -hide_banner -y -nostats -progress pipe:1
 
 **타깃 크기 맞춤** (`supports_target_size() = True`, `target_size_bytes = round(target_size_mb * 1024 * 1024)`)
 - 1차 결과 크기 > target → `degrade_for_retry(opts, attempt, last_size, target)`:
-  - 매 시도 `quality = max(5, quality - 15)`.
+  - 매 시도 `quality = max(5, quality - 15)`. `fps_mode` 가 `"source"`/`"custom"` 이면 품질 하향으로 fps 가 내려가지 않으므로,
+    `attempt >= 1` 부터 `fps_mode = "custom"`, `fps_custom = max(5, round(current_fps * 0.75))` 로 fps 도 함께 낮춘다 (사용자 지정 fps 는 1차 시도에서만 그대로 존중).
   - `attempt >= 2` 부터는 `width = round(width * 0.85)` 도 함께 축소(width 가 None 이면 원본 폭에서 시작). lock 이 꺼져 있으면 height 도 같은 비율로.
   - `attempt >= max_attempts - 1` 이면 None (포기).
 - 포기 시 마지막 결과 파일은 남기고 `ConvertResult.ok = True`, `message = "Target size not reached (2.3 MB > 2.0 MB)"`.
@@ -436,7 +449,7 @@ class JobRunner(QThread):
 │  ☐ clip_c.mp4     ...                                  Idle   │ │ [Reset to Source Size]             │ │
 │                                                         │ │ Quality ───────●──── 70              │ │
 │  (Thumbnails 모드: 160x90 썸네일 격자 + 파일명)          │ │   18 fps · 144 colors · bayer       │ │
-│                                                         │ │ ☐ FPS override [ 15.0 ]              │ │
+│                                                         │ │ FPS [ Custom ▼ ] [ 15.0 ]  src 29.97 │ │
 │                                                         │ │ ☐ Target size  [ 2.0 ] MB            │ │
 │                                                         │ │ Loop [ 0 ]  (0 = infinite)           │ │
 │                                                         │ └─────────────────────────────────────┘ │
@@ -538,7 +551,8 @@ class ThumbnailLoader(QObject):
 - `set_item(row: int, item: VideoItem | None)`: `item is None or item.info is None` → 전체 비활성 + 라벨 `"Select a probed video to edit its range."`.
   있으면 `slider.setRange(0, info.last_frame)`, 스핀박스 범위 동기화, 값 = `item.effective_range()`.
 - 위젯: `start_spin`, `end_spin`(QSpinBox; 서로 `start ≤ end` 제약), `RangeSlider`, 좌/우 타임코드 라벨(`format_timecode`),
-  `frames_label`(`"Frames: 120 / 360 (4.0 s)"`), 시작/끝 미리보기 `QLabel` 160×90, 버튼 `Full Range`, `Apply to Checked`.
+  `frames_label`(`"Frames: 120 / 360 (4.0 s) → 60 GIF frames @ 15 fps"`; 메인 윈도우가 `set_output_fps(fps)` 로 현재 출력 fps 를 넘겨 주고, 옵션 변경 시마다 갱신),
+  시작/끝 미리보기 `QLabel` 160×90, 버튼 `Full Range`, `Apply to Checked`.
 - 값 변경 → `range_changed = Signal(int, object)` (row, `FrameRange | None`; 전체 구간이면 None). 메인 윈도우가 모델에 반영.
 - `Apply to Checked` → `apply_to_checked = Signal(object)` (FrameRange). 메인 윈도우가 체크된 모든 항목에 `clamp` 하여 적용하고, 잘린 항목 수를 로그.
 - 미리보기: `ThumbnailLoader.request(path, frame_to_sec(start), 160)` / end 도 동일. `thumbnail_ready` 의 key 와 자신이 기다리는 key 가 일치할 때만 라벨 갱신(지연 도착 무시).
@@ -568,7 +582,10 @@ class OptionsPanelFactory:
   변환 시에는 anchor 축 값만 전달되고 다른 축은 `-2` (5.6) → **항목별 비율 유지**가 보장된다. UI 의 다른 축 값은 "선택 항목 기준 예시" 임을 툴팁으로 안내.
 - **락 OFF**: 두 값을 그대로 모든 항목에 적용 (비율 왜곡 허용).
 - `quality_slider`(QSlider 1~100) + 값 라벨 + 매핑 힌트 라벨(`"18 fps · 144 colors · bayer"`, `ref_info.fps` 기준, 없으면 30 가정).
-- `fps_check` + `fps_spin`(QDoubleSpinBox 1~60, 소수 1자리), `target_check` + `target_spin`(QDoubleSpinBox 0.1~500 MB), `loop_spin`(0~100, 0 툴팁 `"0 = infinite"`).
+- **FPS 행**: `fps_mode_combo`(`"Auto (from quality)"` / `"Source"` / `"Custom"`) + `fps_spin`(QDoubleSpinBox 1~60, 소수 1자리, 기본 15.0; Custom 모드에서만 활성)
+  + 결과 라벨(`"→ 15 fps"`; Source 모드면 선택 항목의 fps, 없으면 `"→ source fps"`). 모드가 Auto 면 Quality 슬라이더 변화에 따라 결과 라벨이 갱신되고,
+  Custom/Source 모드면 Quality 힌트 라벨의 fps 부분이 사라진다 (`"144 colors · bayer"`). `fps_custom` 이 선택 항목 fps 보다 크면 라벨을 노란색으로 `"→ 29.97 fps (capped to source)"`.
+- `target_check` + `target_spin`(QDoubleSpinBox 0.1~500 MB), `loop_spin`(0~100, 0 툴팁 `"0 = infinite"`).
 - `get_options()` 는 `GifOptions(width=None if 0 else w, …)`. `set_options()` 는 역변환.
 
 ### 6.9 `OutputPanel(QGroupBox)`
@@ -589,6 +606,7 @@ Add Files / Add Folder / Drop ─▶ model.add_paths ─▶ rows_added ─▶ Pr
     └▶ probe_failed ─▶ model.set_info(None, error) + log.append_error
 List currentChanged ─▶ FrameRangePanel.set_item(row, item) ; OptionsPanel.set_reference_info(item.info)
 FrameRangePanel.range_changed ─▶ model.update_item(row, frame_range=…)
+OptionsPanel.options_changed ─▶ FrameRangePanel.set_output_fps(resolve_fps(options, item.info.fps))  (GIF 프레임 수 표기 갱신)
 Format combo changed ─▶ 옵션 패널 교체(OptionsPanelFactory.create) ; OutputPanel 접미사 제안
 Convert Checked ─▶ options = output_panel.apply_to(options_panel.get_options())
     ─▶ converter.validate(options) → 문제 있으면 QMessageBox.warning 후 중단
@@ -644,13 +662,17 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | `gif_params_for_quality(50, 29.97)` | `fps=18, max_colors=144, dither="bayer:bayer_scale=3", stats_mode="full"` |
 | `gif_params_for_quality(100, 24)` | `fps=24` (소스 상한), `max_colors=256`, `dither="sierra2_4a"`, `stats_mode="diff"` |
 | `gif_params_for_quality(10, 30)` | `fps=8, max_colors=54, dither="none"` |
+| `resolve_fps(GifOptions(fps_mode="auto", quality=50), 29.97)` | `18` |
+| `resolve_fps(GifOptions(fps_mode="source"), 29.97)` | `29.97` |
+| `resolve_fps(GifOptions(fps_mode="custom", fps_custom=12), 29.97)` | `12.0` |
+| `resolve_fps(GifOptions(fps_mode="custom", fps_custom=60), 24)` | `24.0` (소스 상한) |
 | `make_output_path("a.mp4", None, "_gif", ".gif", overwrite=False)` (a_gif.gif 존재) | `a_gif_001.gif` |
 | `make_output_path("a.mp4", Path("out"), "", ".gif", overwrite=True)` | `out/a.gif` |
 | `eval_fraction("30000/1001")` | `29.97…` ; `eval_fraction("0/0")` → `0.0` |
 | `parse_ffmpeg_stderr(sample, 1234)` | `width=1920, height=1080, fps=29.97, duration=12.34, codec="h264"` |
 
 `test_gif_converter.py` 는 `GifConverter.build_command` 결과에 대해
-`-ss 1.000`, `-t 1.000` 포함, 전체 구간이면 둘 다 미포함, 필터 문자열에 `fps=18`, `scale=640:-2:flags=lanczos`, `max_colors=144`, `dither=bayer:bayer_scale=3` 포함,
+`-ss 1.000`, `-t 1.000` 포함, 전체 구간이면 둘 다 미포함, 필터 문자열에 `fps=18`(auto) 또는 `fps=12`(custom 12), `scale=640:-2:flags=lanczos`, `max_colors=144`, `dither=bayer:bayer_scale=3` 포함,
 `-loop 0` 포함, 마지막 인자가 출력 경로임을 단언한다. `degrade_for_retry` 는 quality 70 → 55 → 40, attempt 2 부터 width 축소를 단언한다.
 
 ---
