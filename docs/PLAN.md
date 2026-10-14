@@ -31,7 +31,8 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 | R7 | 변환 구간을 **프레임 단위**로 지정 | 항목별 `FrameRange(start_frame, end_frame)`. 범위 슬라이더(듀얼 핸들) + 스핀박스 + 시작/끝 프레임 미리보기. "체크된 모든 항목에 적용" 버튼 |
 | R8 | 지금은 GIF 만, 나중에 다른 포맷 | `BaseConverter` 추상 클래스 + `ConverterRegistry`. UI 는 레지스트리에서 포맷 콤보를 채우고, 포맷별 옵션 패널을 팩토리로 생성 |
 | R9 | 출력 GIF 의 fps 를 사용자가 지정 | `FPS` 모드 콤보 `Auto (from quality)` / `Source` / `Custom`. Custom 이면 QDoubleSpinBox(1~60) 값을 사용. 어떤 모드든 원본 fps 를 넘지 않게 상한 적용 |
-| R10 | 변환 전에 **각 파일의 예상 출력 크기**를 본다 | 리스트에 `Est. size` 열. 1단계 휴리스틱(즉시, `~2.4 MB`) → 2단계 샘플 인코딩(백그라운드, `≈2.1 MB`). 옵션·구간이 바뀌면 자동 재계산. 체크 항목 합계를 Convert 버튼 위에 표시. 상세는 5.8 |
+| R10 | 변환 전에 **각 파일의 예상 출력 파일 용량(MB)** 을 본다 | 픽셀 크기가 아니라 **바이트 수**를 추정해 MB 로 표시. 리스트에 `Est. file size` 열. 1단계 휴리스틱(즉시, `~2.4 MB`) → 2단계 샘플 인코딩(백그라운드, `≈2.1 MB`). 옵션·구간이 바뀌면 자동 재계산. 체크 항목 합계를 Convert 버튼 위에 표시. 상세는 5.8 |
+| R11 | 필요한 라이브러리 · 외부 바이너리를 **한 번에 설치** | `setup.bat` 더블클릭 → 표준 라이브러리만 쓰는 `bootstrap.py` 가 pip 패키지 설치 + ffmpeg/ffprobe 다운로드·검증을 수행. 앱 안에서도 `Help > Check Dependencies…` 로 상태 확인과 누락분 설치. 상세는 13장 |
 
 ### 1.2 비기능 요구
 
@@ -98,12 +99,16 @@ GUI 를 바꿔야 할 사유가 생기면 `app/core` 는 Qt 비의존이므로 U
 
 ```
 JUN_Video_Tool/
-├── launch.py                      # 진입점. run() → QApplication → MainWindow.show()
-├── requirements.txt               # PySide6>=6.8,<7 ; imageio-ffmpeg (선택, ffmpeg 폴백) ; pytest (개발)
+├── launch.py                      # 진입점. 의존성 사전 점검(13.4) → QApplication → MainWindow.show()
+├── setup.bat                      # 더블클릭 설치: py -3 bootstrap.py %*  (13장)
+├── bootstrap.py                   # 표준 라이브러리만 사용. pip 설치 + ffmpeg 다운로드/검증 + 결과 리포트
+├── requirements.txt               # PySide6>=6.8,<7  (런타임 필수)
+├── requirements-dev.txt           # pytest  (개발)
+├── deps.json                      # 외부 바이너리 목록: 이름, URL(주/대체), sha256 URL, zip 안 경로, 설치 위치
 ├── README.md
 ├── CHANGELOG.md
 ├── .gitignore                     # __pycache__/ *.pyc bin/ .venv/ dist/ build/ *.spec
-├── bin/                           # (선택) ffmpeg.exe / ffprobe.exe 를 여기에 두면 최우선 사용. git 제외
+├── bin/                           # bootstrap 이 ffmpeg.exe / ffprobe.exe / VERSION.txt 를 설치하는 곳. 최우선 탐색. git 제외
 ├── docs/
 │   └── PLAN.md                    # 이 문서
 ├── tests/
@@ -121,6 +126,7 @@ JUN_Video_Tool/
     ├── core/                      # UI 비의존 로직. job_runner.py 만 PySide6.QtCore 허용
     │   ├── __init__.py
     │   ├── ffmpeg_locator.py      # find_ffmpeg() / find_ffprobe() / ffmpeg_version()
+    │   ├── dependency_check.py    # DependencyStatus 목록 생성 (pip 패키지 · ffmpeg · ffprobe). 표준 라이브러리만 사용
     │   ├── media_probe.py         # MediaInfo 생성: probe(path)
     │   ├── thumbnail.py           # extract_frame_png(path, time_sec, max_width) -> bytes
     │   ├── models.py              # VideoItem, FrameRange, ItemStatus, MediaInfo, ConvertOptions, ConvertJob, ConvertResult
@@ -135,6 +141,7 @@ JUN_Video_Tool/
         ├── __init__.py
         ├── main_window.py         # MainWindow(QMainWindow)
         ├── settings_dialog.py     # SettingsDialog: concurrency / hwaccel / estimate on-off
+        ├── dependency_dialog.py   # DependencyDialog: 상태 표 + Install Missing (bootstrap.py 를 QProcess 로 실행, 로그 스트리밍)
         ├── styles/
         │   └── dark.qss
         └── widgets/
@@ -177,7 +184,8 @@ def ffmpeg_version(exe: Path) -> str:
 - 결과는 모듈 레벨에서 1회 캐시 (`_FFMPEG`, `_FFPROBE`). `tool_root = Path(__file__).resolve().parents[2]`.
 - ffprobe 가 없으면 `media_probe` 가 ffmpeg stderr 파싱 폴백을 사용한다 (5.2).
 - 모든 서브프로세스는 `creationflags=utils.subprocess_flags()` 로 실행 — Windows 면 `subprocess.CREATE_NO_WINDOW`, 그 외 0.
-- `requirements.txt` 의 `imageio-ffmpeg` 는 **선택 의존**이지만 기본 포함해, `pip install -r requirements.txt` 만으로 변환이 되게 한다.
+- 정상 경로는 **`setup.bat` 이 `bin/` 에 ffmpeg 를 설치**하는 것이다 (13장). `imageio-ffmpeg` 는 `requirements.txt` 에 넣지 않고,
+  bootstrap 이 ffmpeg 다운로드에 실패했을 때만 폴백으로 설치한다 (3단계 탐색은 그대로 유효).
 
 ---
 
@@ -483,7 +491,7 @@ class JobRunner(QThread):
 - 러너는 한 번에 하나만 존재. 실행 중에는 `Convert Checked` 비활성, `Cancel` 활성, 리스트 편집(추가·삭제) 비활성.
 - `concurrency` 는 `AppSettings` 의 `run/concurrency` (1~4, 기본 2). 전체 진행 바는 완료 작업 수 기준이고, 항목별 진행률은 리스트에서 동시에 여러 개가 움직인다.
 
-### 5.8 출력 크기 추정 (`core/size_estimator.py`) — R10
+### 5.8 출력 파일 용량(MB) 추정 (`core/size_estimator.py`) — R10
 
 GIF 용량은 팔레트·디더링·프레임 간 변화량에 좌우되어 수식으로 정확히 구할 수 없다. 그래서 **2단계**로 보여 준다.
 
@@ -720,11 +728,12 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 ```
 
 - 메뉴바: `File`(Add Files… `Ctrl+O`, Add Folder… `Ctrl+Shift+O`, Exit), `Edit`(Check All `Ctrl+A`, Uncheck All `Ctrl+Shift+A`, Invert Check `Ctrl+I`, Remove Selected `Del`, Clear List, Refresh Estimates `F5`, Settings…),
-  `View`(List `Ctrl+1`, Thumbnails `Ctrl+2`), `Help`(About, Show ffmpeg Info).
+  `View`(List `Ctrl+1`, Thumbnails `Ctrl+2`), `Help`(Check Dependencies…, Show ffmpeg Info, About).
 - 툴바는 6.1 의 버튼. 뷰 모드는 `QActionGroup` 으로 상호 배제.
-- 시작 시 ffmpeg 를 못 찾으면 `QMessageBox.critical` 로
-  `"ffmpeg was not found. Put ffmpeg.exe (and ffprobe.exe) into:\n<tool>/bin\nor install it on PATH, or run: pip install imageio-ffmpeg"` 를 띄우고,
-  `Convert Checked` 와 `Add *` 를 비활성한 채 창은 열어 둔다.
+- 시작 시 ffmpeg 를 못 찾으면 `QMessageBox` (버튼 `Install Now` / `Later`) 로
+  `"ffmpeg was not found. Install it now? (downloads ~90 MB into <tool>/bin)"` 를 띄운다.
+  `Install Now` → `DependencyDialog` 를 열어 설치 진행(13.5). `Later` → `Convert Checked` 와 `Add *` 를 비활성한 채 창은 열어 둔다.
+  설치가 끝나면 `ffmpeg_locator` 캐시를 비우고 다시 탐색해 버튼을 활성화한다 (재시작 불필요).
 - 창 제목 `f"JUN Video Tool v{VERSION}"`.
 
 ### 6.12 `AppSettings` (`config/settings.py`)
@@ -786,7 +795,7 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 
 | 단계 | 내용 | 완료 기준 |
 |------|------|-----------|
-| **P0** | 뼈대: 디렉터리, `version.py`, `constants.py`, `launch.py`, 빈 `MainWindow`, `dark.qss`, `.gitignore`, `requirements.txt` | `python launch.py` 로 창이 뜬다 |
+| **P0** | 뼈대: 디렉터리, `version.py`, `constants.py`, `launch.py`, 빈 `MainWindow`, `dark.qss`, `.gitignore`, `requirements*.txt`, **`deps.json` + `bootstrap.py` + `setup.bat`**, `dependency_check.py` | 빈 PC 에서 `setup.bat` 한 번으로 `python launch.py` 가 뜬다 |
 | **P1** | `models`, `utils`, `ffmpeg_locator`, `media_probe`, `thumbnail` + `tests/test_utils.py`, `test_probe_parser.py` | pytest 통과. 콘솔에서 `probe()` / `extract_frame_png()` 동작 |
 | **P2** | `VideoListModel`, `VideoItemDelegate`(list 모드), `VideoListView`, 툴바(추가/제거/체크 3종), 드래그&드롭, `ProbeLoader`, `LogPanel` | 리스트업 + 메타데이터 표시 |
 | **P3** | `ThumbnailLoader`, delegate thumbs 모드, View 전환 | 썸네일 격자 보기 |
@@ -794,8 +803,8 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | **P5** | `BaseOptionsPanel`/`OptionsPanelFactory`, `GifOptionsPanel`(크기·락·품질·fps·loop), `OutputPanel`, 포맷 콤보 | 옵션이 `GifOptions` 로 왕복(get/set) |
 | **P6** | `RangeSlider`, `FrameRangePanel`, 시작/끝 미리보기, Apply to Checked, 컨텍스트 메뉴 Reset Range | 항목별 구간 저장·표시 |
 | **P7** | `JobRunner`(병렬 N, hwaccel 폴백), 진행률, 취소, 항목 상태 표시, 전체 진행 바, 완료 요약, 큰 출력 경고 | 벌크 GIF 변환 end-to-end |
-| **P8** | `size_estimator`(휴리스틱 + 샘플), `Est. size` 열, 합계 라벨, 타깃 초과 표시, 디바운스 재계산 | 변환 전 예상 크기 표시 |
-| **P9** | Target size 재시도, `AppSettings` 저장/복원, `Settings…` 다이얼로그(concurrency, hwaccel), 단축키, `README.md`(ffmpeg 설치 안내), `CHANGELOG.md`, **Windows 10 에서 12.3 체크리스트 수행** | v0.1.0 |
+| **P8** | `size_estimator`(휴리스틱 + 샘플), `Est. file size` 열, 합계 라벨, 타깃 초과 표시, 디바운스 재계산 | 변환 전 예상 크기 표시 |
+| **P9** | Target size 재시도, `AppSettings` 저장/복원, `Settings…` 다이얼로그(concurrency, hwaccel), **`DependencyDialog`(Help 메뉴 + 시작 시 안내)**, 단축키, `README.md`(설치 안내), `CHANGELOG.md`, **Windows 10 에서 12.3 체크리스트 수행** | v0.1.0 |
 
 ---
 
@@ -824,6 +833,10 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | 예상 크기 오차 | 휴리스틱은 ±50%, 샘플은 보통 ±20% 수준. 표기에 `~`/`≈` 로 신뢰도를 구분하고, 툴팁에 `"Estimate from 2 samples (48 frames). Actual size may differ."` 명시. 변환 후 실측과 비교해 로그에 오차 기록 |
 | 샘플 추정이 ffmpeg 자원을 잠식 | 변환 중에는 추정 중단. 추정 풀 동시 수는 썸네일과 공유(4). 디바운스 500ms + 이전 요청 취소 |
 | Windows 10 과 11 동작 차이 | 12장 규칙 준수 + Win10 VM 에서 P9 체크리스트 |
+| 설치 시 네트워크 차단 · 사내 프록시 | `bootstrap.py --ffmpeg-zip <로컬 zip>` 오프라인 경로, `--pip-index-url` 미러 지정, `HTTPS_PROXY` 환경변수 존중(urllib 기본). 실패 항목은 수동 절차를 리포트에 출력 |
+| 다운로드 파일 변조 · 손상 | gyan.dev 가 제공하는 `.sha256` 로 검증. 불일치면 삭제하고 대체 URL(BtbN) 로 1회 재시도. 그래도 실패면 중단 |
+| 백신이 ffmpeg.exe 를 격리 | 리포트에 `bin/ffmpeg.exe` 경로와 "백신 예외 추가" 안내. 코드 대응은 없음 |
+| 시스템 Python 오염 | 기본은 현재 인터프리터에 설치. `--venv` 옵션이면 `<tool>/.venv` 를 만들고 `setup.bat`/`run.bat` 이 그 인터프리터를 쓴다 |
 | 중복/대소문자 다른 경로 | `Path.resolve()` 후 비교 (Windows 는 대소문자 무시: `os.path.normcase`) |
 
 ---
@@ -876,3 +889,109 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 7. 예상 크기 표시 → 변환 후 실측과 비교, 오차 로그 확인.
 8. `bin/` 에 ffmpeg 를 두었을 때 / PATH 만 있을 때 / imageio-ffmpeg 만 있을 때 세 경로 모두 기동.
 9. 종료 후 재기동 시 창 위치·옵션·보기 모드 복원.
+10. **깨끗한 Win10 (Python 만 설치)** 에서 `setup.bat` → `run.bat` 만으로 변환까지 되는지.
+
+---
+
+## 13. 의존성 일괄 설치 (R11) — `bootstrap.py` · `setup.bat` · `DependencyDialog`
+
+### 13.1 목표
+
+새 PC 에 **Python 3.11 만 있으면** `setup.bat` 더블클릭 한 번으로 PySide6 등 pip 패키지와 ffmpeg/ffprobe 바이너리가 설치되고,
+앱이 바로 실행된다. 이미 설치된 항목은 건너뛰고(멱등), 결과를 표로 보여 준다.
+
+### 13.2 설치 대상 (`deps.json`)
+
+```json
+{
+  "python": {"min": "3.11", "max_exclusive": "3.14"},
+  "pip": {"requirements": "requirements.txt", "dev_requirements": "requirements-dev.txt"},
+  "binaries": [
+    {
+      "name": "ffmpeg",
+      "install_dir": "bin",
+      "files": ["ffmpeg.exe", "ffprobe.exe"],
+      "verify_cmd": ["ffmpeg.exe", "-version"],
+      "sources": [
+        {"url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+         "sha256_url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256",
+         "members_glob": "*/bin/{name}"},
+        {"url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+         "sha256_url": null,
+         "members_glob": "*/bin/{name}"}
+      ],
+      "pip_fallback": "imageio-ffmpeg"
+    }
+  ]
+}
+```
+- 소스는 순서대로 시도. 첫 번째(gyan.dev release essentials, 약 90 MB) 는 **안정 릴리스 + sha256 제공**이라 기본. 두 번째(BtbN) 는 대체.
+- 모두 실패하면 `pip_fallback` 패키지를 설치해 `ffmpeg_locator` 3단계가 잡을 수 있게 한다 (ffprobe 는 없음 → stderr 파싱 폴백).
+- 새 바이너리(예: gifski) 를 추가할 때는 이 JSON 에 항목만 추가한다. `bootstrap.py` 코드는 바뀌지 않는다.
+- 라이선스: ffmpeg GPL 빌드를 **사용자 PC 에서 다운로드**하는 방식이므로 저장소에 바이너리를 포함하지 않는다 (`bin/` 은 `.gitignore`).
+
+### 13.3 `bootstrap.py` (표준 라이브러리만: `argparse, json, sys, subprocess, urllib.request, hashlib, zipfile, fnmatch, tempfile, shutil, importlib.metadata`)
+
+```
+python bootstrap.py [--check] [--venv] [--dev] [--no-pip] [--no-binaries]
+                    [--ffmpeg-zip PATH] [--pip-index-url URL] [--yes] [--json]
+```
+
+| 단계 | 동작 | 실패 시 |
+|------|------|---------|
+| 0 | Python 버전 검사 (`deps.json` 범위). `--venv` 면 `<tool>/.venv` 생성 후 **그 인터프리터로 자기 자신을 재실행** | 범위 밖이면 안내 후 종료(코드 2) |
+| 1 | `pip` 상태: `importlib.metadata.version()` 으로 `requirements.txt` 각 항목의 설치 여부·버전 확인 | — |
+| 2 | 누락/버전 불일치 패키지만 `python -m pip install -r requirements.txt [--index-url …]` (`--dev` 면 dev 도) | 종료 코드·stderr 를 리포트에 기록, 계속 진행 |
+| 3 | 바이너리별: `install_dir` 에 `files` 가 모두 있고 `verify_cmd` 가 성공하면 **건너뜀** | — |
+| 4 | 다운로드: `--ffmpeg-zip` 이 있으면 그 파일 사용. 없으면 `sources` 순서로 `urllib.request.urlopen` (타임아웃 30 s, 진행률 콘솔 표시, 임시 폴더에 저장) | 다음 소스 |
+| 5 | 검증: `sha256_url` 이 있으면 받아 비교. 불일치 → 삭제 후 다음 소스 | 다음 소스 |
+| 6 | 추출: `zipfile` 에서 `members_glob` 에 맞는 멤버만 `install_dir` 로 (경로 탈출 방지: 멤버 이름 정규화 후 basename 만 사용) | 다음 소스 |
+| 7 | `verify_cmd` 실행 → 첫 줄을 `bin/VERSION.txt` 에 기록 | 삭제 후 다음 소스 |
+| 8 | 모든 소스 실패 → `pip_fallback` 설치 | 리포트에 수동 절차 출력 |
+| 9 | **리포트**: 항목 / 상태(`OK · Installed · Skipped · FAILED`) / 버전 / 위치 를 표로 출력. `--json` 이면 JSON 으로(`DependencyDialog` 가 파싱) | 하나라도 FAILED 면 종료 코드 1 |
+
+- `--check` 는 1·3 단계만 수행하고 리포트만 출력한다 (설치 없음). 앱 내 상태 표가 이걸 쓴다.
+- `--yes` 가 없으면 다운로드 전에 용량과 URL 을 보여 주고 `[Y/n]` 확인. `setup.bat` 은 `--yes` 없이 호출해 사용자가 확인하게 한다.
+- 콘솔 출력은 영어. 종료 시 `setup.bat` 이 `pause` 로 창을 유지한다.
+
+### 13.4 `launch.py` 의 사전 점검 (PySide6 가 없어도 동작해야 함)
+
+```python
+def main():
+    missing = dependency_check.missing_pip_packages()        # 표준 라이브러리만으로 판단
+    if missing:
+        msg = "Missing packages: … Run setup.bat to install them."
+        _show_fallback_message(msg)                             # tkinter.messagebox 가 가능하면 그것, 아니면 print + input()
+        if _ask_yes_no("Run setup now?"): subprocess.call([sys.executable, "bootstrap.py"]); return
+        sys.exit(1)
+    from app.ui.main_window import MainWindow                   # 여기서 처음 PySide6 import
+    …
+```
+- `python.org` 설치본은 tkinter 를 포함하므로 GUI 안내가 가능하고, 없으면 콘솔로 대체한다.
+- ffmpeg 누락은 PySide6 가 있는 상태이므로 `MainWindow` 가 Qt 다이얼로그로 처리한다 (6.11).
+
+### 13.5 `DependencyDialog(QDialog)` (`ui/dependency_dialog.py`)
+
+- 열리면 `bootstrap.py --check --json` 을 `QProcess` 로 실행해 표를 채운다: `Name | Required | Found | Status | Location`.
+  행 예: `PySide6 | >=6.8,<7 | 6.11.1 | OK | site-packages`, `ffmpeg | any | — | Missing | bin/`.
+- 버튼: `Install Missing`(= `bootstrap.py --yes --json`, 누락이 없으면 비활성), `Re-check`, `Open bin Folder`, `Close`.
+- 설치 중에는 하단 `QPlainTextEdit` 에 bootstrap 의 stdout 을 실시간 스트리밍하고(`readyReadStandardOutput`), 진행률 바는 bootstrap 이 출력하는
+  `PROGRESS <percent>` 줄을 파싱해 갱신. 끝나면 표를 다시 채우고 `dependencies_changed = Signal()` 발행 → 메인 윈도우가 `ffmpeg_locator` 캐시를 비우고 버튼을 활성화.
+- 설치 중 다이얼로그를 닫으려 하면 확인 후 `QProcess.kill()`. 부분 설치된 zip/임시 파일은 bootstrap 이 `atexit` 로 정리.
+
+### 13.6 `setup.bat` · `run.bat`
+
+```bat
+@echo off
+cd /d "%~dp0"
+where py >nul 2>nul && (py -3 bootstrap.py %*) || (python bootstrap.py %*)
+pause
+```
+- `run.bat`: `.venv` 가 있으면 `.venv\Scripts\python.exe launch.py`, 없으면 `py -3 launch.py` (`--venv` 로 설치한 경우 대응).
+- README 설치 절차는 세 줄이다: ① Python 3.11 설치 ② `setup.bat` 더블클릭 ③ `run.bat` 더블클릭.
+
+### 13.7 테스트 (`tests/test_bootstrap.py`, 네트워크 없이)
+
+- `deps.json` 스키마 로드와 `members_glob` 매칭: `fnmatch("ffmpeg-7.1-essentials_build/bin/ffmpeg.exe", "*/bin/ffmpeg.exe")` → True, `"../bin/ffmpeg.exe"` 는 경로 정규화 후 basename 만 쓰는지.
+- sha256 비교 함수, 버전 범위 비교(`"6.11.1"` 이 `">=6.8,<7"` 을 만족, `"7.0.0"` 은 불만족 — `packaging` 없이 튜플 비교로 구현).
+- `--check --json` 출력이 `DependencyDialog` 가 기대하는 키(`name, required, found, status, location`)를 갖는지 (가짜 환경 주입).
