@@ -60,9 +60,20 @@ def run() -> int:
     from PySide6.QtWidgets import QApplication
 
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    if sys.platform.startswith("win"):
+        # 작업표시줄이 python.exe 아이콘 대신 이 앱의 창 아이콘을 쓰도록 AppUserModelID 를 지정한다
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JUN.VideoTool")
+        except Exception:
+            pass
     app = QApplication(sys.argv)
     app.setApplicationName("JUN Video Tool")
     app.setOrganizationName("JUN")
+    from app.ui.icons import app_icon
+
+    app.setWindowIcon(app_icon())
 
     qss = ROOT / "app" / "ui" / "styles" / "dark.qss"
     if qss.is_file():

@@ -14,6 +14,7 @@ from ...core.models import FrameRange, VideoItem
 from ...core.size_estimator import output_frames
 from ...core.thumbnail import clamp_time
 from ...core.utils import format_timecode, frame_to_sec
+from ..icons import icon
 from .loaders import ThumbnailLoader
 from .range_slider import RangeSlider
 
@@ -68,8 +69,8 @@ class FrameRangePanel(QGroupBox):
         self.frames_label = QLabel()
         self.frames_label.setObjectName("HintLabel")
         self.frames_label.setWordWrap(True)
-        self.full_btn = QPushButton("Full Range")
-        self.apply_btn = QPushButton("Apply to Checked")
+        self.full_btn = QPushButton(icon("full_range"), "Full Range")
+        self.apply_btn = QPushButton(icon("apply"), "Apply to Checked")
 
         v = QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)

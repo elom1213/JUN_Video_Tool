@@ -748,6 +748,20 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 - `load_gif_options() -> GifOptions`, `save_gif_options(opts)`, `get(key, default)`, `set(key, value)`.
 - 저장 시점: `closeEvent`, 변환 시작 시(옵션).
 
+### 6.14 아이콘 (`ui/icons/`)
+
+- **툴바 · 버튼 아이콘은 SVG 라인 아이콘** (24×24 viewBox, stroke `#e6e6e6` 1.8px, round cap/join). 파일명이 곧 이름이고
+  `icons.icon("add_files")` 로 `QIcon` 을 얻는다 (PySide6 의 `qsvgicon` 플러그인이 렌더, 추가 의존성 없음).
+  목록: `add_files add_folder folder remove clear check_all uncheck_all invert view_list view_thumbs convert cancel settings lock unlock full_range apply reset refresh download info`.
+  코랄 배경(체크 상태) 위에서도 읽히도록 밝은 회색 단색을 쓰고, 항상 켜진 상태로 쓰이는 `convert`/`lock` 은 흰색.
+- **앱 아이콘** `app.svg` (256 viewBox: 어두운 둥근 타일 + 코랄 필름 스트립 + 흰 재생 삼각형 + "GIF" 배지).
+  글자는 폰트가 아니라 **패스로** 그려 어떤 머신에서 렌더해도 같다.
+  `dev/build_icons.py` 가 `app.png`(256) 와 **다중 크기 `app.ico`**(16~256, PNG 압축 엔트리) 를 만든다. Qt 의 ico 플러그인은 단일
+  이미지만 쓰므로 ICO 컨테이너는 스크립트가 직접 조립한다. `--sheet out.png` 로 전체 아이콘 미리보기 시트를 뽑을 수 있다.
+- `launch.py` 가 `app.setWindowIcon(app_icon())` 과 Windows `SetCurrentProcessExplicitAppUserModelID("JUN.VideoTool")` 를 호출해
+  작업표시줄에 python 아이콘 대신 앱 아이콘이 뜨게 한다. 다이얼로그도 같은 아이콘을 쓴다.
+- 이모지·심볼 폰트는 쓰지 않는다 (12.2). 아이콘을 추가할 때는 SVG 를 폴더에 넣고 이름으로 부르면 된다.
+
 ### 6.13 스타일 (`ui/styles/dark.qss`)
 
 - 배경 `#2b2b2b`, 패널 `#353535`, 테두리 `#444`, 글자 `#e6e6e6`, 보조 글자 `#9a9a9a`,

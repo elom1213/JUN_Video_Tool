@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 
 from ..config import constants as C
 from ..config.settings import AppSettings
+from .icons import app_icon
 
 
 class SettingsDialog(QDialog):
     def __init__(self, settings: AppSettings, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
+        self.setWindowIcon(app_icon())
         self._settings = settings
 
         self.concurrency_spin = QSpinBox()

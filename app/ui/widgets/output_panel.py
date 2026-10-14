@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QGridLayout, QGroupBox, Q
                                QPushButton, QRadioButton, QLabel)
 
 from ...core.models import ConvertOptions
+from ..icons import icon
 
 
 class OutputPanel(QGroupBox):
@@ -27,7 +28,7 @@ class OutputPanel(QGroupBox):
         self.dir_edit = QLineEdit()
         self.dir_edit.setReadOnly(True)
         self.dir_edit.setPlaceholderText("Choose an output folder…")
-        self.browse_btn = QPushButton("Browse…")
+        self.browse_btn = QPushButton(icon("folder"), "Browse…")
         self.suffix_edit = QLineEdit(self._auto_suffix)
         self.suffix_edit.setPlaceholderText("Suffix")
         self.overwrite_check = QCheckBox("Overwrite")

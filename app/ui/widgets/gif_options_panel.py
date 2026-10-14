@@ -12,6 +12,7 @@ from ...config import constants as C
 from ...config.constants import gif_params_for_quality
 from ...core.converters.gif_converter import GifOptions, resolve_fps
 from ...core.models import ConvertOptions, MediaInfo
+from ..icons import icon
 from .options_panel_base import BaseOptionsPanel, OptionsPanelFactory
 
 _FPS_MODES = (("Auto (from quality)", "auto"), ("Source", "source"), ("Custom", "custom"))
@@ -38,7 +39,8 @@ class GifOptionsPanel(BaseOptionsPanel):
         self.lock_btn.setCheckable(True)
         self.lock_btn.setChecked(True)
         self.lock_btn.setToolTip("Lock aspect ratio. The other axis follows each video's own ratio.")
-        self.reset_btn = QPushButton("Reset to Source Size")
+        self.lock_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.reset_btn = QPushButton(icon("reset"), "Reset to Source Size")
 
         # --- 품질 ---
         self.quality_slider = QSlider(Qt.Orientation.Horizontal)
@@ -152,8 +154,12 @@ class GifOptionsPanel(BaseOptionsPanel):
             self._updating = False
         self._emit()
 
-    def _lock_toggled(self, on: bool) -> None:
+    def _apply_lock_look(self, on: bool) -> None:
         self.lock_btn.setText("Lock" if on else "Free")
+        self.lock_btn.setIcon(icon("lock" if on else "unlock"))
+
+    def _lock_toggled(self, on: bool) -> None:
+        self._apply_lock_look(on)
         if on:
             self._sync_locked_axis()
         self._emit()
@@ -229,7 +235,7 @@ class GifOptionsPanel(BaseOptionsPanel):
         try:
             self._anchor = options.anchor if options.anchor in ("width", "height") else "width"
             self.lock_btn.setChecked(bool(options.lock_aspect))
-            self.lock_btn.setText("Lock" if options.lock_aspect else "Free")
+            self._apply_lock_look(bool(options.lock_aspect))
             self.width_spin.setValue(int(options.width or 0))
             self.height_spin.setValue(int(options.height or 0))
             self.quality_slider.setValue(max(1, min(100, int(options.quality))))

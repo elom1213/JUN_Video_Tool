@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QHeaderView, QLabel, QMessa
 
 from ..core.utils import tool_root
 from ..core.ffmpeg_locator import bin_dir
+from .icons import app_icon, icon
 
 _COLS = ("Name", "Required", "Found", "Status", "Location")
 
@@ -24,6 +25,7 @@ class DependencyDialog(QDialog):
     def __init__(self, parent=None, auto_install: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Dependencies")
+        self.setWindowIcon(app_icon())
         self.resize(760, 520)
         self._proc: QProcess | None = None
         self._installing = False
@@ -46,9 +48,9 @@ class DependencyDialog(QDialog):
         self.log.setObjectName("LogPanel")
         self.log.setMaximumBlockCount(3000)
 
-        self.install_btn = QPushButton("Install Missing")
-        self.recheck_btn = QPushButton("Re-check")
-        self.open_bin_btn = QPushButton("Open bin Folder")
+        self.install_btn = QPushButton(icon("download"), "Install Missing")
+        self.recheck_btn = QPushButton(icon("refresh"), "Re-check")
+        self.open_bin_btn = QPushButton(icon("folder"), "Open bin Folder")
         self.close_btn = QPushButton("Close")
         self.status_label = QLabel("")
         self.status_label.setObjectName("HintLabel")

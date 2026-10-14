@@ -12,3 +12,4 @@
 - 병렬 ffmpeg 실행, GPU 디코드 자동 폴백, 취소, 항목별 진행률
 - `setup.bat` 한 번으로 PySide6 + ffmpeg 설치 (`bootstrap.py`), 앱 내 `Help > Check Dependencies…`
 - Windows 10 / 11 지원
+- 앱 아이콘(`app.ico`/`app.png`, `dev/build_icons.py` 로 생성) 과 SVG 툴바 · 버튼 아이콘 세트

@@ -23,6 +23,7 @@ from ..core.size_estimator import make_est_key
 from ..core.thumbnail import representative_time
 from ..core.utils import human_size, make_output_path
 from .dependency_dialog import DependencyDialog
+from .icons import app_icon, icon
 from .settings_dialog import SettingsDialog
 from .widgets import gif_options_panel  # noqa: F401  (팩토리 등록)
 from .widgets.frame_range_panel import FrameRangePanel
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{VERSION}")
+        self.setWindowIcon(app_icon())
         self.resize(1280, 760)
         self.setMinimumSize(1000, 600)
 
@@ -73,17 +75,18 @@ class MainWindow(QMainWindow):
         # --- 툴바 ---
         tb = QToolBar("Main")
         tb.setMovable(False)
-        tb.setIconSize(QSize(16, 16))
+        tb.setIconSize(QSize(18, 18))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
-        self.act_add_files = QAction("Add Files", self)
-        self.act_add_folder = QAction("Add Folder", self)
-        self.act_remove = QAction("Remove", self)
-        self.act_clear = QAction("Clear", self)
-        self.act_check_all = QAction("Check All", self)
-        self.act_uncheck_all = QAction("Uncheck All", self)
-        self.act_invert = QAction("Invert", self)
-        self.act_view_list = QAction("List", self)
-        self.act_view_thumbs = QAction("Thumbnails", self)
+        self.act_add_files = QAction(icon("add_files"), "Add Files", self)
+        self.act_add_folder = QAction(icon("add_folder"), "Add Folder", self)
+        self.act_remove = QAction(icon("remove"), "Remove", self)
+        self.act_clear = QAction(icon("clear"), "Clear", self)
+        self.act_check_all = QAction(icon("check_all"), "Check All", self)
+        self.act_uncheck_all = QAction(icon("uncheck_all"), "Uncheck All", self)
+        self.act_invert = QAction(icon("invert"), "Invert", self)
+        self.act_view_list = QAction(icon("view_list"), "List", self)
+        self.act_view_thumbs = QAction(icon("view_thumbs"), "Thumbnails", self)
         for a in (self.act_view_list, self.act_view_thumbs):
             a.setCheckable(True)
         self.act_view_list.setChecked(True)
@@ -139,9 +142,10 @@ class MainWindow(QMainWindow):
         self.total_label.setObjectName("TotalLabel")
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.total_label.setWordWrap(True)
-        self.convert_btn = QPushButton("Convert Checked")
+        self.convert_btn = QPushButton(icon("convert"), "Convert Checked")
         self.convert_btn.setObjectName("ConvertButton")
-        self.cancel_btn = QPushButton("Cancel")
+        self.convert_btn.setIconSize(QSize(20, 20))
+        self.cancel_btn = QPushButton(icon("cancel"), "Cancel")
         self.cancel_btn.setEnabled(False)
         side = QWidget()
         sv = QVBoxLayout(side)
@@ -194,7 +198,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_add_files)
         m_file.addAction(self.act_add_folder)
         m_file.addSeparator()
-        act_exit = QAction("Exit", self)
+        act_exit = QAction(icon("cancel"), "Exit", self)
         act_exit.triggered.connect(self.close)
         m_file.addAction(act_exit)
 
@@ -209,10 +213,10 @@ class MainWindow(QMainWindow):
         m_edit.addAction(self.act_remove)
         m_edit.addAction(self.act_clear)
         m_edit.addSeparator()
-        self.act_refresh_est = QAction("Refresh Estimates", self)
+        self.act_refresh_est = QAction(icon("refresh"), "Refresh Estimates", self)
         self.act_refresh_est.setShortcut(QKeySequence("F5"))
         m_edit.addAction(self.act_refresh_est)
-        self.act_settings = QAction("Settings…", self)
+        self.act_settings = QAction(icon("settings"), "Settings…", self)
         m_edit.addAction(self.act_settings)
 
         m_view = mb.addMenu("View")
@@ -222,9 +226,9 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_view_thumbs)
 
         m_help = mb.addMenu("Help")
-        self.act_deps = QAction("Check Dependencies…", self)
-        self.act_ffmpeg_info = QAction("Show ffmpeg Info", self)
-        self.act_about = QAction("About", self)
+        self.act_deps = QAction(icon("download"), "Check Dependencies…", self)
+        self.act_ffmpeg_info = QAction(icon("info"), "Show ffmpeg Info", self)
+        self.act_about = QAction(app_icon(), "About", self)
         m_help.addAction(self.act_deps)
         m_help.addAction(self.act_ffmpeg_info)
         m_help.addSeparator()
