@@ -3,7 +3,7 @@
 - **Author**: Ji Hun Park (Junny / `Dnable_JunnyPark`)
 - **작성일**: 2026-10-14
 - **상태**: 코드 작성 전 설계 확정본. 이 문서만 보고 코드를 작성할 수 있는 수준을 목표로 한다.
-- **대상 환경**: Windows 11, Python 3.11, PySide6 6.x (이 PC 에 6.11.1 설치 확인됨), ffmpeg (별도 확보 — 4장)
+- **대상 환경**: **Windows 10 (21H2 이상) 과 Windows 11 양쪽**, Python 3.11, PySide6 6.x (개발 PC 는 Win11 + 6.11.1), ffmpeg (별도 확보 — 4장). 호환 규칙은 12장
 
 ---
 
@@ -31,6 +31,7 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 | R7 | 변환 구간을 **프레임 단위**로 지정 | 항목별 `FrameRange(start_frame, end_frame)`. 범위 슬라이더(듀얼 핸들) + 스핀박스 + 시작/끝 프레임 미리보기. "체크된 모든 항목에 적용" 버튼 |
 | R8 | 지금은 GIF 만, 나중에 다른 포맷 | `BaseConverter` 추상 클래스 + `ConverterRegistry`. UI 는 레지스트리에서 포맷 콤보를 채우고, 포맷별 옵션 패널을 팩토리로 생성 |
 | R9 | 출력 GIF 의 fps 를 사용자가 지정 | `FPS` 모드 콤보 `Auto (from quality)` / `Source` / `Custom`. Custom 이면 QDoubleSpinBox(1~60) 값을 사용. 어떤 모드든 원본 fps 를 넘지 않게 상한 적용 |
+| R10 | 변환 전에 **각 파일의 예상 출력 크기**를 본다 | 리스트에 `Est. size` 열. 1단계 휴리스틱(즉시, `~2.4 MB`) → 2단계 샘플 인코딩(백그라운드, `≈2.1 MB`). 옵션·구간이 바뀌면 자동 재계산. 체크 항목 합계를 Convert 버튼 위에 표시. 상세는 5.8 |
 
 ### 1.2 비기능 요구
 
@@ -38,6 +39,7 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 - 변환 중 **취소** 가능. 항목별 진행률 + 전체 진행률 표시.
 - 실패한 항목은 건너뛰고 나머지 계속. 실패 이유를 로그 패널과 항목 상태에 남긴다.
 - 마지막 사용 폴더 · 옵션 · 보기 모드를 `QSettings` 로 기억.
+- **Windows 10 에서도 동작**해야 한다. Windows 11 전용 API · 폰트 · 셸 기능을 쓰지 않는다 (12장).
 - **UI 문자열은 전부 영어**, 주석·독스트링은 한국어 (전역 규칙 6장).
 
 ### 1.3 범위 밖 (이번에 하지 않음)
@@ -56,9 +58,39 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 | 미디어 처리 | **ffmpeg / ffprobe 외부 프로세스** | GIF 팔레트 2패스(`palettegen`/`paletteuse`) 품질이 가장 좋고, 포맷 확장 시 명령만 추가하면 됨. OpenCV 등 바인딩 의존 제거 |
 | 썸네일 | ffmpeg `image2pipe` → PNG bytes → `QImage.fromData` | 임시 파일 없이 메모리로 |
 | 메타데이터 | ffprobe JSON, 없으면 `ffmpeg -i` stderr 정규식 파싱 | `imageio-ffmpeg` 로 ffmpeg 만 있고 ffprobe 가 없는 경우 대비 |
-| 스레딩 | 썸네일·프로브: `QThreadPool` + `QRunnable` / 변환: 전용 `QThread` 1개가 큐를 순차 처리 | ffmpeg 자체가 멀티스레드이므로 동시 변환은 1 |
+| 스레딩 | 썸네일·프로브: `QThreadPool` + `QRunnable` / 변환: 전용 `QThread` 1개가 큐를 관리하며 **ffmpeg 프로세스를 N개 동시 실행**(기본 2, 설정 1~4) | 벌크 변환 처리량 확보. 아래 2.2 |
 | 설정 | `QSettings("JUN", "JUN_Video_Tool")` | 레지스트리 저장, 의존성 없음 |
 | 테스트 | `pytest` (명령 생성·수치 변환 등 순수 로직만) | ffmpeg 없이도 도는 테스트로 한정 |
+
+### 2.1 GUI 프레임워크 검토 — PySide6 를 유지하는 이유
+
+사용자가 "PySide6 가 필수는 아니다" 라고 했으므로 대안을 비교했다. **변환 속도는 GUI 와 무관**하다 — 시간의 거의 전부를
+ffmpeg 프로세스가 쓰고, GUI 는 명령을 만들고 진행률을 그릴 뿐이다. 따라서 선택 기준은 편의성(개발·유지보수)과 UI 요구(썸네일 격자, 듀얼 슬라이더, 드래그&드롭)다.
+
+| 후보 | 장점 | 단점 | 판정 |
+|------|------|------|------|
+| **PySide6 (Qt)** | 모델/뷰·델리게이트로 썸네일 격자와 체크박스 리스트를 정석으로 구현. 드래그&드롭·스레드풀 내장. 기존 `A00080` 계열과 같은 스택이라 코드·경험 재사용 | exe 크기 큼(100MB+), 듀얼 슬라이더는 직접 그려야 함 | **채택** |
+| Tkinter / customtkinter | 표준 라이브러리, 가벼움 | 썸네일 격자·가상화 리스트가 약함, 드래그&드롭 외부 패키지 필요, 디자인 자유도 낮음 | 보류 |
+| Flet / Dear PyGui | 선언적, 보기 좋음 | 커스텀 위젯(범위 슬라이더) 제약, 파일 드롭·네이티브 다이얼로그 지원이 불완전 | 보류 |
+| Electron / Tauri + 웹 UI | 가장 자유로운 UI | Python 코어와 IPC 계층이 추가되고 빌드가 두 배. 혼자 유지보수하기엔 과함 | 보류 |
+| C# WPF / WinUI 3 | 네이티브, 빠른 시작 | 기존 Python 자산과 단절, Maya 파이프라인 재사용 불가 | 보류 |
+
+→ **GUI 는 PySide6**, 처리는 **ffmpeg 외부 프로세스**로 확정. 속도는 2.2 의 전략으로 확보한다.
+GUI 를 바꿔야 할 사유가 생기면 `app/core` 는 Qt 비의존이므로 UI 레이어만 교체하면 된다 (3장 레이어 규칙).
+
+### 2.2 변환 속도 전략
+
+| 전략 | 내용 | 효과 |
+|------|------|------|
+| **병렬 변환** | `JobRunner` 가 동시에 N개 ffmpeg 프로세스를 돌린다 (`concurrency` 설정 1~4, 기본 2). `palettegen`/`paletteuse` 는 단일 스레드 비중이 커서 코어가 남으므로 2~3 병렬이 벌크에서 1.5~2.5배 | 벌크 처리량 |
+| **하드웨어 디코드** | 옵션 `hwaccel: "auto" | "none"` (기본 `auto`) → `-hwaccel auto` 를 입력 옵션에 추가. H.264/HEVC 디코드를 GPU 로. 실패 시(ffmpeg 가 자동으로 CPU 폴백하지 않는 환경) 재시도 1회는 `none` 으로 | 고해상도 원본 디코드 |
+| **입력 측 seek** | `-ss` 를 `-i` 앞에 두어 구간 바깥을 디코드하지 않음 (이미 5.6 에 반영) | 구간 변환 |
+| **스케일 선행** | 필터 체인에서 `fps` → `scale` → `palettegen` 순. 축소 후 팔레트를 만들어 팔레트 분석 비용 절감 | 모든 변환 |
+| **썸네일 저해상도** | 썸네일 추출 `-ss` 입력 seek + `scale=320:-2` + 가능하면 `-skip_frame nokey` 는 쓰지 않음(정확도) | UI 반응성 |
+| **gifski 엔진 (후속)** | `BaseConverter` 를 그대로 두고 `GifConverter.engine: "ffmpeg" | "gifski"` 를 추가. gifski 는 ffmpeg 로 PNG 프레임을 파이프로 뽑아 넘기며, 같은 용량에서 화질이 눈에 띄게 좋다. 속도는 ffmpeg 보다 느리므로 "품질 우선" 선택지로 제공 | 화질(선택) |
+
+- `concurrency` 와 `hwaccel` 은 `AppSettings` 에 저장하고 `Settings…` 다이얼로그(메뉴 `Edit > Settings…`)에서 바꾼다. 이번 범위(P7/P8)에 포함.
+- 병렬 실행 시 로그 줄은 `[clip_a.mp4]` 접두로 어느 작업의 메시지인지 구분한다.
 
 ---
 
@@ -67,7 +99,7 @@ PySide6 데스크톱 툴. 출력 크기(종횡비 락) · 압축률 · 프레임
 ```
 JUN_Video_Tool/
 ├── launch.py                      # 진입점. run() → QApplication → MainWindow.show()
-├── requirements.txt               # PySide6>=6.6 ; imageio-ffmpeg (선택, ffmpeg 폴백) ; pytest (개발)
+├── requirements.txt               # PySide6>=6.8,<7 ; imageio-ffmpeg (선택, ffmpeg 폴백) ; pytest (개발)
 ├── README.md
 ├── CHANGELOG.md
 ├── .gitignore                     # __pycache__/ *.pyc bin/ .venv/ dist/ build/ *.spec
@@ -76,7 +108,8 @@ JUN_Video_Tool/
 │   └── PLAN.md                    # 이 문서
 ├── tests/
 │   ├── test_utils.py              # 프레임↔초, 크기 계산, 품질 매핑, 출력 경로
-│   ├── test_gif_converter.py      # build_command() 가 만든 인자 리스트 검증
+│   ├── test_gif_converter.py      # build_command() 가 만든 인자 리스트 검증, resolve_fps, degrade_for_retry
+│   ├── test_size_estimator.py     # heuristic_size, pick_sample_ranges, scale_sample
 │   └── test_probe_parser.py       # ffprobe JSON / ffmpeg stderr 파서
 └── app/
     ├── __init__.py
@@ -92,7 +125,8 @@ JUN_Video_Tool/
     │   ├── thumbnail.py           # extract_frame_png(path, time_sec, max_width) -> bytes
     │   ├── models.py              # VideoItem, FrameRange, ItemStatus, MediaInfo, ConvertOptions, ConvertJob, ConvertResult
     │   ├── utils.py               # frame_to_sec, sec_to_frame, fit_size, make_output_path, format_timecode, subprocess_flags
-    │   ├── job_runner.py          # JobRunner(QThread): 큐 순차 실행, 진행률 파싱, 취소
+    │   ├── size_estimator.py      # make_est_key, pick_sample_ranges, scale_sample (순수 함수)
+    │   ├── job_runner.py          # JobRunner(QThread): 병렬 N 실행, 진행률 파싱, 취소
     │   └── converters/
     │       ├── __init__.py        # registry 생성 + GifConverter 등록
     │       ├── base.py            # BaseConverter(ABC), ConverterRegistry
@@ -100,6 +134,7 @@ JUN_Video_Tool/
     └── ui/
         ├── __init__.py
         ├── main_window.py         # MainWindow(QMainWindow)
+        ├── settings_dialog.py     # SettingsDialog: concurrency / hwaccel / estimate on-off
         ├── styles/
         │   └── dark.qss
         └── widgets/
@@ -107,7 +142,7 @@ JUN_Video_Tool/
             ├── video_list_model.py    # VideoListModel(QAbstractListModel)
             ├── video_item_delegate.py # VideoItemDelegate: list / thumbs 두 모드 그리기
             ├── video_list_view.py     # VideoListView(QListView): 드래그&드롭, 뷰 모드 전환, 컨텍스트 메뉴
-            ├── loaders.py             # ProbeLoader, ThumbnailLoader (QThreadPool 비동기 + 캐시)
+            ├── loaders.py             # ProbeLoader, ThumbnailLoader, SizeEstimator (QThreadPool 비동기 + 캐시)
             ├── range_slider.py        # RangeSlider(QWidget): 듀얼 핸들 정수 슬라이더
             ├── frame_range_panel.py   # FrameRangePanel: 구간 편집 + 시작/끝 미리보기
             ├── options_panel_base.py  # BaseOptionsPanel + OptionsPanelFactory
@@ -196,6 +231,9 @@ class VideoItem:
     progress: int = 0                         # 0~100
     message: str = ""                         # 실패 사유 / 결과 요약 ("1.8 MB")
     output_path: Path | None = None
+    est_size: int | None = None               # 예상 출력 크기(bytes). None = 미계산
+    est_level: str = "none"                   # "none" | "heuristic" | "sampled" | "failed"
+    est_key: str = ""                         # 추정에 쓴 (옵션+구간) 해시. 불일치면 stale 로 간주
 
     def effective_range(self) -> FrameRange:  # frame_range or FrameRange.full(info)
 
@@ -317,6 +355,12 @@ class BaseConverter(ABC):
         """타깃 크기 초과 시 다음 시도용 옵션(새 객체). None 이면 포기."""
     def estimate_warning(self, item: VideoItem, options: ConvertOptions) -> str | None:
         """변환 전 경고 문구(예: 너무 큰 출력). None 이면 경고 없음."""
+    def heuristic_size(self, item: VideoItem, options: ConvertOptions) -> int | None:
+        """즉시 계산되는 대략적 출력 크기(bytes). 포맷이 지원하지 않으면 None."""
+    def build_sample_command(self, ffmpeg: Path, item: VideoItem, options: ConvertOptions,
+                             sample_range: FrameRange, output_path: Path) -> list[str] | None:
+        """sample_range 구간만 같은 옵션으로 인코딩하는 argv. None 이면 샘플 추정 미지원.
+        기본 구현: item 을 복사해 frame_range 만 바꿔 build_command 를 호출."""
 
 class ConverterRegistry:
     def register(self, conv: BaseConverter) -> None       # format_id 중복 시 ValueError
@@ -349,6 +393,7 @@ class GifOptions(ConvertOptions):
     loop: int = 0                       # 0 = 무한 반복
     target_size_mb: float | None = None # None → 비활성
     max_attempts: int = 5
+    hwaccel: str = "auto"               # "auto" → `-hwaccel auto` 입력 옵션 추가 | "none" → 생략 (2.2)
 
 @dataclass
 class GifParams:                        # 품질 매핑 결과
@@ -383,7 +428,7 @@ class GifParams:                        # 품질 매핑 결과
 
 ```
 ffmpeg -hide_banner -y -nostats -progress pipe:1
-       [-ss {start_sec:.3f} -t {dur_sec:.3f}]  -i <src>
+       [-hwaccel auto] [-ss {start_sec:.3f} -t {dur_sec:.3f}]  -i <src>
        -filter_complex "[0:v]fps={fps}[,scale={w}:{h}:flags=lanczos],split[a][b];[a]palettegen=max_colors={mc}:stats_mode={stats}[p];[b][p]paletteuse=dither={dither}"
        -loop {loop}  <out.gif>
 ```
@@ -416,22 +461,70 @@ class JobRunner(QThread):
     log          = Signal(str)
 
     def __init__(self, ffmpeg: Path, converter: BaseConverter,
-                 jobs: list[tuple[int, ConvertJob]], parent=None)
-    def run(self) -> None:          # for row, job in jobs: if self._cancel: emit canceled result; else _run_one
-    def cancel(self) -> None:       # self._cancel = True ; 현재 Popen 이 있으면 terminate()
+                 jobs: list[tuple[int, ConvertJob]], concurrency: int = 2, parent=None)
+    def run(self) -> None:
+        # concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) 에 (row, job) 을 제출.
+        # 각 워커가 _run_one 을 실행하고 결과를 job_finished 로 emit (Signal 은 스레드 안전, 큐드 커넥션).
+        # 모두 끝나면 all_finished. 취소 시 아직 시작하지 않은 future 는 cancel() 하고 CANCELED 결과를 emit.
+    def cancel(self) -> None:       # self._cancel = True ; 실행 중인 모든 Popen 을 terminate() (self._procs: dict[int, Popen], Lock 보호)
     def _run_one(self, row: int, job: ConvertJob) -> ConvertResult:
         # attempt 루프 (타깃 크기 지원 시 최대 max_attempts):
         #   cmd = converter.build_command(ffmpeg, job.item, opts, job.output_path)
-        #   self._proc = Popen(cmd, stdout=PIPE, stderr=PIPE, text=True, encoding="utf-8", errors="replace",
-        #                      creationflags=subprocess_flags())
+        #   proc = Popen(cmd, stdout=PIPE, stderr=PIPE, text=True, encoding="utf-8", errors="replace",
+        #                creationflags=subprocess_flags()) ; self._procs[row] = proc
         #   stdout 을 줄 단위로 읽어 "out_time_us=" / "out_time_ms=" 값으로 percent 계산 (dur_sec 기준), "progress=end" 로 종료 감지
         #   stderr 는 별도 스레드(threading.Thread) 로 흘려 받아 마지막 20줄 보관 (파이프 데드락 방지)
+        #   returncode != 0 이고 hwaccel 이 "auto" 였고 stderr 에 "hwaccel"/"Failed to initialise" 가 있으면 hwaccel="none" 으로 1회 재시도
         #   returncode != 0 → ok=False, error=tail_lines(stderr)
         #   취소 플래그 → 출력 파일 삭제 후 canceled=True
         #   ok 이고 타깃 크기 초과 → degrade_for_retry → 반복
 ```
 - `MainWindow` 가 `ConvertJob` 목록을 만든다: 체크된 항목 중 `info` 가 있는 것만. `info` 없는 체크 항목은 `SKIPPED` 로 표시하고 로그.
 - 러너는 한 번에 하나만 존재. 실행 중에는 `Convert Checked` 비활성, `Cancel` 활성, 리스트 편집(추가·삭제) 비활성.
+- `concurrency` 는 `AppSettings` 의 `run/concurrency` (1~4, 기본 2). 전체 진행 바는 완료 작업 수 기준이고, 항목별 진행률은 리스트에서 동시에 여러 개가 움직인다.
+
+### 5.8 출력 크기 추정 (`core/size_estimator.py`) — R10
+
+GIF 용량은 팔레트·디더링·프레임 간 변화량에 좌우되어 수식으로 정확히 구할 수 없다. 그래서 **2단계**로 보여 준다.
+
+**1단계 — 휴리스틱 (즉시, UI 스레드)**  `GifConverter.heuristic_size()`
+
+```
+out_frames  = round(dur_sec * fps)
+out_w,out_h = 출력 크기 (-2 축은 원본 비율로 환산)
+bpp         = 0.08 + 0.42 * (max_colors / 256)          # 프레임당 픽셀 1개가 차지하는 평균 바이트. 색 많을수록 LZW 압축률 저하
+dither_mul  = {"none": 0.80, "bayer": 1.00, "sierra2_4a": 1.35}[dither 종류]
+size        = 800 + out_frames * out_w * out_h * bpp * dither_mul
+```
+- 계수는 경험값이며 `constants.py` 에 모아 두고, 샘플 추정이 끝나면 **그 파일의 실측/휴리스틱 비율**을 로그에 남겨 추후 보정에 쓴다.
+- 표시는 `~2.4 MB` (물결표 = 대략).
+
+**2단계 — 샘플 인코딩 (백그라운드, `QThreadPool`)**  `SizeEstimator`
+
+```python
+class SizeEstimator(QObject):          # ui/widgets/loaders.py 의 다른 로더와 같은 풀 사용
+    estimate_ready  = Signal(int, str, int)     # row, est_key, bytes
+    estimate_failed = Signal(int, str, str)     # row, est_key, error
+    def request(self, row: int, item: VideoItem, converter: BaseConverter, options: ConvertOptions) -> str   # est_key 반환
+    def cancel_all(self) -> None
+
+def make_est_key(path: Path, rng: FrameRange, options: ConvertOptions) -> str   # sha1(str(path) + asdict(options) + rng)  (core, 순수 함수)
+def pick_sample_ranges(rng: FrameRange, src_fps: float, out_fps: float, n: int = 2, out_frames_each: int = 24) -> list[FrameRange]
+    # 구간을 n 등분한 각 조각의 중앙에서 out_frames_each 개의 출력 프레임이 나오도록 src 프레임 수 = ceil(out_frames_each * src_fps / out_fps) 를 자른다.
+    # 구간이 짧아 샘플 합이 전체의 70% 이상이면 → 전체 구간 1개를 샘플로 (= 정확값).
+def scale_sample(sample_bytes: list[int], sample_out_frames: list[int], total_out_frames: int) -> int
+    # per_frame = sum(bytes) / sum(frames) ; return round(800 + per_frame * total_out_frames)
+```
+- 샘플은 `build_sample_command()` 로 **실제 변환과 동일한 필터 체인**을 임시 파일(`%TEMP%/JUN_Video_Tool/est_<key>.gif`)에 쓰고 크기를 읽은 뒤 삭제한다.
+  기본 2구간 × 24프레임 → 파일당 ffmpeg 2회, 보통 0.3~1.5 초. 풀 동시 4 → 20개 파일도 수 초.
+- 표시는 `≈2.1 MB` (근사 등호 = 샘플 기반). 샘플이 전체 구간을 덮었으면 `2.1 MB` (정확).
+- **재계산 트리거**: 옵션 변경(`options_changed`), 구간 변경(`range_changed`), 파일 추가(프로브 완료 직후). 500ms 디바운스 후 체크된 항목 전부 + 현재 선택 항목.
+  요청 전 `est_key` 를 계산해 모델에 저장하고, 결과가 도착했을 때 모델의 `est_key` 와 같을 때만 반영 (늦게 온 결과 무시). 새 요청이 들어오면 큐에 남은 이전 작업은 `cancel_all`.
+- 트리거 사이에는 휴리스틱을 즉시 써서 열이 비지 않게 하고, 샘플 결과가 오면 덮어쓴다.
+- 변환이 끝난 항목은 실제 크기를 `Done · 1.8 MB` 로 보이므로 추정 열은 비운다.
+- `Target size` 가 켜져 있으면 추정값 > 타깃인 항목을 노란색으로 표시해 재시도가 일어날 것임을 미리 알린다.
+- 체크 항목 합계는 `Estimated total: ≈14.2 MB (5 files, 2 pending)` 로 Convert 버튼 위 라벨에. 아직 샘플이 안 끝난 항목은 휴리스틱으로 합산하고 `pending` 수를 표기.
+- 추정은 **변환 결과 재사용은 하지 않는다** (샘플은 일부 구간이므로). 변환 중에는 추정 요청을 보내지 않는다 (ffmpeg 자원 경쟁).
 
 ---
 
@@ -444,9 +537,9 @@ class JobRunner(QThread):
 │ [Add Files] [Add Folder] [Remove] [Clear] │ [Check All] [Uncheck All] [Invert] │ View: (● List ○ Thumbnails) │
 ├────────────────────────────────────────────────────┬─────────────────────────────────────────┤
 │ VideoListView   (QSplitter 좌:우 = 6:4)             │ Output format: [ GIF              ▼ ]   │
-│  ☑ clip_a.mp4     1920x1080 · 29.97 fps · 00:12  Done · 1.8 MB │ ┌ GIF Options ───────────────────────┐ │
-│  ☑ clip_b.mov     1280x720  · 30 fps    · 01:03  ▓▓▓▓░░ 62 %  │ │ Width [ 640 ] [Lock] Height [ 360 ] │ │
-│  ☐ clip_c.mp4     ...                                  Idle   │ │ [Reset to Source Size]             │ │
+│  ☑ clip_a.mp4   1920x1080 · 29.97 fps · 00:12          Done · 1.8 MB │ ┌ GIF Options ─────────────────┐ │
+│  ☑ clip_b.mov   1280x720  · 30 fps    · 01:03  ≈6.3 MB  ▓▓▓▓░░ 62 % │ │ Width [ 640 ] [Lock] Height [ 360 ] │
+│  ☐ clip_c.mp4   ...                            ~2.4 MB        Idle  │ │ [Reset to Source Size]        │ │
 │                                                         │ │ Quality ───────●──── 70              │ │
 │  (Thumbnails 모드: 160x90 썸네일 격자 + 파일명)          │ │   18 fps · 144 colors · bayer       │ │
 │                                                         │ │ FPS [ Custom ▼ ] [ 15.0 ]  src 29.97 │ │
@@ -465,6 +558,7 @@ class JobRunner(QThread):
 │                                                         │ │ ( ) Folder [ C:\...        ] [...]  │ │
 │                                                         │ │ Suffix [ _gif ]   ☐ Overwrite       │ │
 │                                                         │ └─────────────────────────────────────┘ │
+│                                                         │   Estimated total: ≈14.2 MB (5 files)   │
 │                                                         │   [      Convert Checked      ]         │
 │                                                         │   [           Cancel          ]         │
 ├────────────────────────────────────────────────────┴─────────────────────────────────────────┤
@@ -478,7 +572,9 @@ class JobRunner(QThread):
 ### 6.2 `VideoListModel(QAbstractListModel)`
 
 - 내부 `self._items: list[VideoItem]`, 썸네일 `self._pixmaps: dict[Path, QPixmap]`.
-- 커스텀 롤: `ItemRole = UserRole + 1`(VideoItem), `InfoTextRole`("1920x1080 · 29.97 fps · 00:12 · 12.3 MB"), `StatusRole`(ItemStatus), `ProgressRole`(int), `MessageRole`(str).
+- 커스텀 롤: `ItemRole = UserRole + 1`(VideoItem), `InfoTextRole`("1920x1080 · 29.97 fps · 00:12 · 12.3 MB"), `StatusRole`(ItemStatus), `ProgressRole`(int), `MessageRole`(str),
+  `EstimateTextRole`(str: `"~2.4 MB"` / `"≈2.1 MB"` / `"2.1 MB"` / `"…"`(계산 중) / `""`), `EstimateOverTargetRole`(bool).
+- `set_estimate(row, est_key, size, level)`: 모델의 `est_key` 와 일치할 때만 반영.
 - `data(index, role)`:
   - `DisplayRole` → 파일명 (`path.name`)
   - `CheckStateRole` → `Qt.Checked / Qt.Unchecked`
@@ -497,7 +593,7 @@ class JobRunner(QThread):
 ### 6.3 `VideoItemDelegate(QStyledItemDelegate)`
 
 - `mode: str = "list" | "thumbs"` (`set_mode`).
-- **list** 모드 — 행 높이 28px. 좌→우: `[체크박스 16px] 파일명(elide middle, 폭의 45%) │ info 텍스트(회색) │ 우측 140px 상태 영역`.
+- **list** 모드 — 행 높이 28px. 좌→우: `[체크박스 16px] 파일명(elide middle, 폭의 40%) │ info 텍스트(회색) │ 예상 크기 90px(우측 정렬, 타깃 초과면 노란색) │ 우측 140px 상태 영역`.
   상태 영역: `RUNNING` → 미니 진행 바 + `"62 %"`, `DONE` → 녹색 `"Done · 1.8 MB"`, `FAILED` → 빨간 `"Failed"`, 그 외 상태명.
 - **thumbs** 모드 — 셀 180×150. 상단 160×90 썸네일(레터박스 중앙 정렬, 없으면 어두운 사각형 + `"…"`), 좌상단 체크박스, 하단 파일명(elide middle) + info 텍스트 1줄(작게). 진행 중이면 썸네일 아래 3px 진행 바. `DONE/FAILED` 는 우상단 작은 색 점.
 - 체크박스 클릭은 `editorEvent` 에서 체크 영역 히트테스트(`_check_rect(option)`)로만 처리. 더블클릭은 무시.
@@ -607,6 +703,9 @@ Add Files / Add Folder / Drop ─▶ model.add_paths ─▶ rows_added ─▶ Pr
 List currentChanged ─▶ FrameRangePanel.set_item(row, item) ; OptionsPanel.set_reference_info(item.info)
 FrameRangePanel.range_changed ─▶ model.update_item(row, frame_range=…)
 OptionsPanel.options_changed ─▶ FrameRangePanel.set_output_fps(resolve_fps(options, item.info.fps))  (GIF 프레임 수 표기 갱신)
+options_changed / range_changed / probe_ready ─▶ _schedule_estimates() (500ms 디바운스)
+    ─▶ 체크된 행 + 현재 행: model.set_estimate(row, key, heuristic_size, "heuristic") ; SizeEstimator.request(row, …)
+    ─▶ estimate_ready ─▶ model.set_estimate(row, key, bytes, "sampled") ─▶ _update_total_label()
 Format combo changed ─▶ 옵션 패널 교체(OptionsPanelFactory.create) ; OutputPanel 접미사 제안
 Convert Checked ─▶ options = output_panel.apply_to(options_panel.get_options())
     ─▶ converter.validate(options) → 문제 있으면 QMessageBox.warning 후 중단
@@ -620,7 +719,7 @@ Cancel ─▶ runner.cancel() (남은 QUEUED 항목은 CANCELED)
 closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is running. Cancel and exit?") ─▶ cancel + wait ─▶ settings 저장
 ```
 
-- 메뉴바: `File`(Add Files… `Ctrl+O`, Add Folder… `Ctrl+Shift+O`, Exit), `Edit`(Check All `Ctrl+A`, Uncheck All `Ctrl+Shift+A`, Invert Check `Ctrl+I`, Remove Selected `Del`, Clear List),
+- 메뉴바: `File`(Add Files… `Ctrl+O`, Add Folder… `Ctrl+Shift+O`, Exit), `Edit`(Check All `Ctrl+A`, Uncheck All `Ctrl+Shift+A`, Invert Check `Ctrl+I`, Remove Selected `Del`, Clear List, Refresh Estimates `F5`, Settings…),
   `View`(List `Ctrl+1`, Thumbnails `Ctrl+2`), `Help`(About, Show ffmpeg Info).
 - 툴바는 6.1 의 버튼. 뷰 모드는 `QActionGroup` 으로 상호 배제.
 - 시작 시 ffmpeg 를 못 찾으면 `QMessageBox.critical` 로
@@ -632,7 +731,9 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 
 - `QSettings("JUN", "JUN_Video_Tool")`.
 - 키: `ui/geometry`(bytes), `ui/splitter`(bytes), `ui/view_mode`(str), `io/last_input_dir`, `io/last_output_dir`,
-  `io/output_mode`("source"|"folder"), `io/suffix`, `io/overwrite`, `format/current`, `gif/<field>`(GifOptions 각 필드).
+  `io/output_mode`("source"|"folder"), `io/suffix`, `io/overwrite`, `format/current`, `gif/<field>`(GifOptions 각 필드),
+  `run/concurrency`(int 1~4, 기본 2), `run/hwaccel`("auto"|"none"), `estimate/enabled`(bool, 기본 True; 끄면 휴리스틱만).
+- `SettingsDialog(QDialog)` (`ui/settings_dialog.py`): 위 `run/*`, `estimate/*` 세 항목만 편집. OK 시 저장 후 메인 윈도우가 즉시 반영.
 - `load_gif_options() -> GifOptions`, `save_gif_options(opts)`, `get(key, default)`, `set(key, value)`.
 - 저장 시점: `closeEvent`, 변환 시작 시(옵션).
 
@@ -666,6 +767,10 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | `resolve_fps(GifOptions(fps_mode="source"), 29.97)` | `29.97` |
 | `resolve_fps(GifOptions(fps_mode="custom", fps_custom=12), 29.97)` | `12.0` |
 | `resolve_fps(GifOptions(fps_mode="custom", fps_custom=60), 24)` | `24.0` (소스 상한) |
+| `pick_sample_ranges(FrameRange(0, 899), 30, 15, n=2, out_frames_each=24)` | 2개, 각 48 src 프레임, 중심 ≈ 225 / 675 |
+| `pick_sample_ranges(FrameRange(0, 59), 30, 15, …)` | `[FrameRange(0, 59)]` (샘플이 70% 넘음 → 전체) |
+| `scale_sample([40_000, 60_000], [24, 24], 450)` | `800 + round(100_000/48 * 450)` = `938_300` |
+| `heuristic_size` (300 frames, 640x360, 144 colors, bayer) | `800 + 300*640*360*(0.08+0.42*144/256)*1.0` = `21_859_200` (≈ 20.8 MB, `human_size` 는 1024 기준) |
 | `make_output_path("a.mp4", None, "_gif", ".gif", overwrite=False)` (a_gif.gif 존재) | `a_gif_001.gif` |
 | `make_output_path("a.mp4", Path("out"), "", ".gif", overwrite=True)` | `out/a.gif` |
 | `eval_fraction("30000/1001")` | `29.97…` ; `eval_fraction("0/0")` → `0.0` |
@@ -688,8 +793,9 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | **P4** | `converters/base`, `GifOptions`, `GifConverter`, `gif_params_for_quality`, `tests/test_gif_converter.py` | 명령 생성 테스트 통과 |
 | **P5** | `BaseOptionsPanel`/`OptionsPanelFactory`, `GifOptionsPanel`(크기·락·품질·fps·loop), `OutputPanel`, 포맷 콤보 | 옵션이 `GifOptions` 로 왕복(get/set) |
 | **P6** | `RangeSlider`, `FrameRangePanel`, 시작/끝 미리보기, Apply to Checked, 컨텍스트 메뉴 Reset Range | 항목별 구간 저장·표시 |
-| **P7** | `JobRunner`, 진행률, 취소, 항목 상태 표시, 전체 진행 바, 완료 요약, 큰 출력 경고 | 벌크 GIF 변환 end-to-end |
-| **P8** | Target size 재시도, `AppSettings` 저장/복원, 단축키, `README.md`(ffmpeg 설치 안내), `CHANGELOG.md` | v0.1.0 |
+| **P7** | `JobRunner`(병렬 N, hwaccel 폴백), 진행률, 취소, 항목 상태 표시, 전체 진행 바, 완료 요약, 큰 출력 경고 | 벌크 GIF 변환 end-to-end |
+| **P8** | `size_estimator`(휴리스틱 + 샘플), `Est. size` 열, 합계 라벨, 타깃 초과 표시, 디바운스 재계산 | 변환 전 예상 크기 표시 |
+| **P9** | Target size 재시도, `AppSettings` 저장/복원, `Settings…` 다이얼로그(concurrency, hwaccel), 단축키, `README.md`(ffmpeg 설치 안내), `CHANGELOG.md`, **Windows 10 에서 12.3 체크리스트 수행** | v0.1.0 |
 
 ---
 
@@ -715,6 +821,9 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 | 썸네일 요청 폭주 | 풀 동시 4 + 디바운스 200ms + 슬라이더는 release 시점에만 요청 + 지연 도착 결과 무시(key 비교) |
 | ffmpeg stderr 파이프 가득 차 데드락 | stderr 는 별도 스레드로 소비 |
 | 변환 중 창 닫기 | `closeEvent` 확인 → `cancel()` → 프로세스 terminate → 중간 파일 삭제 → `wait()` |
+| 예상 크기 오차 | 휴리스틱은 ±50%, 샘플은 보통 ±20% 수준. 표기에 `~`/`≈` 로 신뢰도를 구분하고, 툴팁에 `"Estimate from 2 samples (48 frames). Actual size may differ."` 명시. 변환 후 실측과 비교해 로그에 오차 기록 |
+| 샘플 추정이 ffmpeg 자원을 잠식 | 변환 중에는 추정 중단. 추정 풀 동시 수는 썸네일과 공유(4). 디바운스 500ms + 이전 요청 취소 |
+| Windows 10 과 11 동작 차이 | 12장 규칙 준수 + Win10 VM 에서 P9 체크리스트 |
 | 중복/대소문자 다른 경로 | `Path.resolve()` 후 비교 (Windows 는 대소문자 무시: `os.path.normcase`) |
 
 ---
@@ -724,4 +833,46 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 - `WebPConverter`: `-c:v libwebp -lossless 0 -q:v {q} -loop 0`. 옵션이 GifOptions 와 거의 같아 `AnimatedImageOptions` 베이스로 묶을 수 있다.
 - `Mp4Converter`(재인코딩 / 리사이즈 / 구간 자르기): `-c:v libx264 -crf {crf} -preset {preset} -pix_fmt yuv420p`, 오디오 복사/제거 옵션. 짝수 크기 보정은 `-2` 로 이미 해결.
 - `ImageSequenceConverter`: `out_%04d.png`. 출력이 폴더가 되므로 `make_output_path` 에 `is_dir` 변형 필요.
-- 동시 변환 수 설정, 프리셋 저장/불러오기(JSON), 결과 파일 더블클릭으로 열기, 리스트 정렬.
+- gifski 엔진(2.2), 프리셋 저장/불러오기(JSON), 결과 파일 더블클릭으로 열기, 리스트 정렬, 휴리스틱 계수 자동 보정(실측 누적).
+
+---
+
+## 12. Windows 10 호환 규칙
+
+이 툴은 **Windows 10 과 Windows 11 양쪽**에서 동작해야 한다. 개발 PC 는 Win11 이므로 아래 규칙으로 차이를 미리 막는다.
+
+### 12.1 런타임 요구
+
+| 구성 | 요구 | 비고 |
+|------|------|------|
+| Windows | **10 버전 21H2 (빌드 19044) 이상**, 11 | Qt 6.9+ 의 최소 지원 버전. 그 이전 Win10 을 지원해야 하면 `PySide6==6.8.*` 로 고정 (Win10 1809+) |
+| Python | 3.11.x 64-bit | Win10 지원. `python.org` 설치본 또는 PyInstaller 번들 |
+| PySide6 | `>=6.8,<7` 를 `requirements.txt` 에 고정 | 메이저 7 로 자동 승격 금지 |
+| ffmpeg | 정적 빌드(gyan.dev / BtbN) 7.x | Win10/11 공통. `bin/` 배치 또는 imageio-ffmpeg |
+| VC 런타임 | Python 3.11 은 UCRT 사용 → Win10 에 기본 포함 | 별도 설치 불필요 |
+
+### 12.2 코드 규칙
+
+- **Windows 11 전용 API 금지**: DWM 의 Mica/Acrylic(`DWMWA_SYSTEMBACKDROP_TYPE`), 둥근 모서리 속성, `DWMWA_USE_IMMERSIVE_DARK_MODE`(Win10 20H1 이전 미지원) 를 호출하지 않는다.
+  타이틀 바는 OS 기본으로 두고 어두운 테마는 qss 로 클라이언트 영역만 칠한다.
+- **폰트**: qss 에 `Segoe UI Variable`(Win11 전용) 을 쓰지 않는다. 폰트 패밀리를 지정하지 않고 시스템 기본(Win10 `Segoe UI`) 을 상속한다.
+- **아이콘·이모지 금지**: 🔒 같은 이모지는 Win10 의 `Segoe UI Emoji` 버전에 따라 렌더가 다르다. 텍스트(`Lock`/`Free`) 또는 Qt 표준 아이콘(`QStyle.StandardPixmap`) 만 쓴다 (6.8 에 반영됨).
+- **High DPI**: `QApplication` 생성 전 `QGuiApplication.setHighDpiScaleFactorRoundingPolicy(PassThrough)`. 델리게이트의 모든 픽셀 치수는 `option.widget.logicalDpiX()/96` 배율 또는 폰트 메트릭 기반으로 계산해 125%/150% 에서 깨지지 않게 한다 (Win10 노트북 기본 125%).
+- **파일 경로**: 260자 초과 경로는 Win10 기본 설정에서 실패할 수 있다. 출력 경로 길이 > 240 이면 `validate` 가 경고 문구 `"Output path is too long for Windows (>240 chars)."` 를 돌려준다. `\\?\` 접두는 쓰지 않는다 (ffmpeg 가 처리하지 못함).
+- **서브프로세스**: `CREATE_NO_WINDOW` 는 Win10/11 동일. `subprocess` 에 `shell=False` 리스트 argv (4장).
+- **폴더 열기**: `Open Containing Folder` 는 `QDesktopServices.openUrl(QUrl.fromLocalFile(dir))` 로. `explorer /select,` 는 경로에 쉼표가 있으면 Win10 에서 실패 사례가 있어 쓰지 않는다.
+- **QSettings**: 레지스트리 `HKCU\Software\JUN\JUN_Video_Tool` — 양쪽 동일.
+- **드래그&드롭**: Win10 에서 관리자 권한으로 실행한 앱은 탐색기 드롭을 받지 못한다(UIPI). README 에 "일반 권한으로 실행" 명시. 코드 대응은 없음.
+- **임시 폴더**: 샘플 추정 임시 파일은 `tempfile.gettempdir()/JUN_Video_Tool/` 에. 종료 시 폴더 정리.
+
+### 12.3 검증 체크리스트 (P9 에서 Win10 머신 또는 VM 으로 수행)
+
+1. `python launch.py` 기동, 창 테마·폰트·레이아웃이 Win11 과 동일한지 (스크린샷 비교).
+2. 125% / 150% DPI 에서 리스트 행 높이·썸네일 격자·범위 슬라이더 핸들이 잘리지 않는지.
+3. 탐색기에서 파일 10개 드래그&드롭, 한글·공백 경로 포함.
+4. 썸네일 보기 전환, 구간 편집 미리보기 갱신.
+5. 변환 2개 병렬 + 취소. ffmpeg 콘솔 창이 뜨지 않는지.
+6. `-hwaccel auto` 가 GPU 없는 VM 에서 실패하면 CPU 폴백 재시도가 동작하는지 (로그 확인).
+7. 예상 크기 표시 → 변환 후 실측과 비교, 오차 로그 확인.
+8. `bin/` 에 ffmpeg 를 두었을 때 / PATH 만 있을 때 / imageio-ffmpeg 만 있을 때 세 경로 모두 기동.
+9. 종료 후 재기동 시 창 위치·옵션·보기 모드 복원.
