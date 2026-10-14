@@ -11,41 +11,24 @@ from ...config import constants as C
 from ...config.constants import GifParams, gif_params_for_quality
 from ..models import ConvertOptions, VideoItem
 from ..size_estimator import heuristic_gif_size, output_frames
-from ..utils import fit_size, resolve_dimensions
 from .base import BaseConverter
+from .common import VideoOptions, fmt_fps, input_args, output_dimensions, scale_args, validate_common
 
 
 @dataclass
-class GifOptions(ConvertOptions):
+class GifOptions(VideoOptions):
     format_id: str = "gif"
-    width: int | None = None
-    height: int | None = None
-    lock_aspect: bool = True
-    anchor: str = "width"
-    quality: int = 70
-    fps_mode: str = "auto"          # "auto" | "source" | "custom"
-    fps_custom: float = 15.0
-    loop: int = 0
-    target_size_mb: float | None = None
-    max_attempts: int = 5
-    hwaccel: str = C.DEFAULT_HWACCEL  # "auto" | "none"
+    loop: int = 0                       # 0 = 무한 반복
 
 
-def resolve_fps(options: GifOptions, src_fps: float) -> float:
-    """PLAN 5.6 '출력 fps 결정' 표."""
+def resolve_fps(options: VideoOptions, src_fps: float) -> float:
+    """PLAN 5.6 '출력 fps 결정' 표 (auto = 품질 매핑)."""
     if options.fps_mode == "source":
         return float(src_fps)
     if options.fps_mode == "custom":
         f = float(options.fps_custom)
         return float(min(src_fps, f)) if src_fps > 0 else f
     return gif_params_for_quality(options.quality, src_fps).fps
-
-
-def _fmt_fps(fps: float) -> str:
-    """필터 문자열용 fps 표기 (정수면 정수로)."""
-    if abs(fps - round(fps)) < 1e-6:
-        return str(int(round(fps)))
-    return f"{fps:.3f}".rstrip("0").rstrip(".")
 
 
 class GifConverter(BaseConverter):
@@ -60,18 +43,7 @@ class GifConverter(BaseConverter):
 
     def validate(self, options: ConvertOptions) -> list[str]:
         o = self._opts(options)
-        problems: list[str] = []
-        for name, val in (("Width", o.width), ("Height", o.height)):
-            if val is not None and not (1 <= val <= 8192):
-                problems.append(f"{name} must be between 1 and 8192.")
-        if not (1 <= o.quality <= 100):
-            problems.append("Quality must be between 1 and 100.")
-        if o.fps_mode == "custom" and not (1 <= o.fps_custom <= 60):
-            problems.append("Custom FPS must be between 1 and 60.")
-        if o.target_size_mb is not None and o.target_size_mb <= 0:
-            problems.append("Target size must be greater than 0 MB.")
-        if o.output_dir is not None and not Path(o.output_dir).is_dir():
-            problems.append(f"Output folder does not exist: {o.output_dir}")
+        problems = validate_common(o)
         if o.loop < 0:
             problems.append("Loop count cannot be negative.")
         return problems
@@ -89,16 +61,10 @@ class GifConverter(BaseConverter):
         return resolve_fps(self._opts(options), src_fps)
 
     def scale_args(self, item: VideoItem, options: ConvertOptions) -> tuple[int | None, int | None]:
-        o = self._opts(options)
-        if item.info is None:
-            return o.width, o.height
-        return fit_size(item.info.width, item.info.height, o.width, o.height, o.lock_aspect, o.anchor)
+        return scale_args(item, self._opts(options))
 
     def output_dimensions(self, item: VideoItem, options: ConvertOptions) -> tuple[int, int]:
-        if item.info is None:
-            return 0, 0
-        w, h = self.scale_args(item, options)
-        return resolve_dimensions(item.info.width, item.info.height, w, h)
+        return output_dimensions(item, self._opts(options))
 
     # ------------------------------------------------------------------ 명령
     def build_command(self, ffmpeg: Path, item: VideoItem, options: ConvertOptions,
@@ -106,19 +72,10 @@ class GifConverter(BaseConverter):
         o = self._opts(options)
         if item.info is None:
             raise ValueError("Item has no media info.")
-        info = item.info
         p = self.params(item, o)
-        rng = item.effective_range()
-
         cmd: list[str] = [str(ffmpeg), "-hide_banner", "-y", "-nostats", "-progress", "pipe:1"]
-        if o.hwaccel == "auto":
-            cmd += ["-hwaccel", "auto"]
-        if not rng.is_full(info):
-            start_sec, dur_sec = rng.to_seconds(info.fps)
-            cmd += ["-ss", f"{start_sec:.3f}", "-t", f"{dur_sec:.3f}"]
-        cmd += ["-i", str(item.path)]
-
-        chain = [f"fps={_fmt_fps(p.fps)}"]
+        cmd += input_args(item, o)
+        chain = [f"fps={fmt_fps(p.fps)}"]
         w, h = self.scale_args(item, o)
         if w is not None or h is not None:
             chain.append(f"scale={w}:{h}:flags=lanczos")
@@ -167,8 +124,7 @@ class GifConverter(BaseConverter):
             return None
         o = self._opts(options)
         p = self.params(item, o)
-        rng = item.effective_range()
-        _, dur = rng.to_seconds(item.info.fps)
+        _, dur = item.effective_range().to_seconds(item.info.fps)
         frames = output_frames(dur, p.fps)
         w, h = self.output_dimensions(item, o)
         return heuristic_gif_size(frames, w, h, p.max_colors, p.dither_family)
@@ -177,8 +133,7 @@ class GifConverter(BaseConverter):
         if item.info is None:
             return None
         p = self.params(item, options)
-        rng = item.effective_range()
-        _, dur = rng.to_seconds(item.info.fps)
+        _, dur = item.effective_range().to_seconds(item.info.fps)
         frames = output_frames(dur, p.fps)
         w, h = self.output_dimensions(item, options)
         if frames * w * h > C.LARGE_OUTPUT_PIXELS:

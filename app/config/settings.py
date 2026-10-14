@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
 # last Update date : 2026-10-14
-"""QSettings 래퍼 (PLAN 6.12)."""
+"""QSettings 래퍼 (PLAN 6.12). 포맷별 옵션은 `<format_id>/options_json` 한 키에 JSON 으로 저장한다."""
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
@@ -12,12 +14,17 @@ from PySide6.QtCore import QSettings
 
 from . import constants as C
 from .version import ORG_NAME, SETTINGS_APP
-from ..core.converters.gif_converter import GifOptions
+from ..core.converters.base import BaseConverter
+from ..core.models import ConvertOptions
+
+_SKIP_FIELDS = ("format_id", "output_dir", "suffix", "overwrite")
 
 
 class AppSettings:
     def __init__(self) -> None:
-        self._s = QSettings(ORG_NAME, SETTINGS_APP)
+        # 테스트·스크립트는 JUN_VIDEO_TOOL_SETTINGS_SCOPE 로 별도 범위를 써서 사용자의 설정을 건드리지 않는다
+        scope = os.environ.get("JUN_VIDEO_TOOL_SETTINGS_SCOPE", SETTINGS_APP)
+        self._s = QSettings(ORG_NAME, scope)
 
     # ------------------------------------------------------------------ 범용
     def get(self, key: str, default: Any = None, type_: type | None = None) -> Any:
@@ -58,43 +65,61 @@ class AppSettings:
     def estimate_enabled(self, v: bool) -> None:
         self.set("estimate/enabled", bool(v))
 
-    # ------------------------------------------------------------------ GIF 옵션
-    def load_gif_options(self) -> GifOptions:
-        opts = GifOptions()
-        for f in fields(GifOptions):
-            if f.name in ("format_id", "output_dir", "suffix", "overwrite"):
+    # ------------------------------------------------------------------ 포맷별 옵션
+    def load_options(self, converter: BaseConverter) -> ConvertOptions:
+        opts = converter.default_options()
+        raw = str(self.get(f"{converter.format_id}/options_json", "", str) or "")
+        data: dict = {}
+        if raw:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = {}
+        elif converter.format_id == "gif":
+            data = self._legacy_gif_dict()
+        for f in fields(type(opts)):
+            if f.name in _SKIP_FIELDS or f.name not in data:
                 continue
-            key = f"gif/{f.name}"
-            if not self._s.contains(key):
-                continue
-            raw = self._s.value(key)
+            val = data[f.name]
             default = getattr(opts, f.name)
             try:
-                if raw is None or raw == "":
-                    val = None
-                elif isinstance(default, bool) or f.name == "lock_aspect":
-                    val = str(raw).lower() in ("1", "true", "yes")
-                elif f.name in ("width", "height"):
-                    val = int(raw) if str(raw) not in ("", "None") else None
-                elif f.name == "target_size_mb":
-                    val = float(raw) if str(raw) not in ("", "None") else None
-                elif isinstance(default, int):
-                    val = int(raw)
+                if val is None:
+                    setattr(opts, f.name, None)
+                elif isinstance(default, bool):
+                    setattr(opts, f.name, bool(val))
+                elif isinstance(default, int) and not isinstance(default, bool):
+                    setattr(opts, f.name, int(val))
                 elif isinstance(default, float):
-                    val = float(raw)
-                else:
-                    val = str(raw)
-                setattr(opts, f.name, val)
+                    setattr(opts, f.name, float(val))
+                elif isinstance(default, str):
+                    setattr(opts, f.name, str(val))
+                else:  # Optional 필드(default None): 저장된 타입 그대로
+                    setattr(opts, f.name, val)
             except (TypeError, ValueError):
                 continue
-        opts.hwaccel = self.hwaccel
+        if hasattr(opts, "hwaccel"):
+            opts.hwaccel = self.hwaccel  # type: ignore[attr-defined]
         return opts
 
-    def save_gif_options(self, opts: GifOptions) -> None:
-        for k, v in asdict(opts).items():
-            if k in ("format_id", "output_dir", "suffix", "overwrite"):
+    def save_options(self, opts: ConvertOptions) -> None:
+        d = {k: v for k, v in asdict(opts).items() if k not in _SKIP_FIELDS}
+        self.set(f"{opts.format_id}/options_json", json.dumps(d, default=str))
+
+    def _legacy_gif_dict(self) -> dict:
+        """v0.1.0 의 gif/<field> 키 호환."""
+        out: dict = {}
+        for key in self._s.allKeys():
+            if not key.startswith("gif/") or key == "gif/options_json":
                 continue
-            self.set(f"gif/{k}", "" if v is None else v)
+            name = key[4:]
+            raw = self._s.value(key)
+            if raw is None or raw == "" or raw == "None":
+                out[name] = None
+            elif isinstance(raw, str) and raw.lower() in ("true", "false"):
+                out[name] = raw.lower() == "true"
+            else:
+                out[name] = raw
+        return out
 
     # ------------------------------------------------------------------ 입출력
     @property

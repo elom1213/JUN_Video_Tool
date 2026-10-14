@@ -1,6 +1,6 @@
 # JUN_Video_Tool
 
-영상 파일(mp4 · mov 등)을 여러 개 골라 **GIF 로 벌크 변환**하는 Windows 데스크톱 툴.
+영상 파일(mp4 · mov 등)을 여러 개 골라 **GIF 또는 MP4(H.264) 로 벌크 변환**하는 Windows 데스크톱 툴.
 PySide6 + ffmpeg. Windows 10 (21H2+) / 11.
 
 - 설계 문서: [`docs/PLAN.md`](docs/PLAN.md)
@@ -30,7 +30,8 @@ ffmpeg 를 직접 구했다면 `ffmpeg.exe` 와 `ffprobe.exe` 를 `bin/` 에 넣
 
 1. `Add Files` / `Add Folder` 또는 리스트에 파일을 드래그&드롭.
 2. 변환할 항목을 체크 (`Check All` / `Uncheck All` / `Invert`).
-3. 오른쪽에서 GIF 옵션 조절: 크기(종횡비 `Lock`/`Free`), `Quality`, `FPS`, `Target size`, `Loop`.
+3. `Output format` 에서 GIF 또는 MP4 를 고르고 옵션 조절: 크기(종횡비 `Lock`/`Free`), `Quality`, `FPS`, `Target size`.
+   GIF 는 `Loop`, MP4 는 x264 `Preset` 과 `Audio`(AAC / 원본 복사 / 제거) 가 추가된다.
 4. 항목을 선택해 `Frame Range` 에서 구간을 프레임 단위로 조절. `Apply to Checked` 로 일괄 적용.
 5. 리스트의 `Est. file size` 와 `Estimated total` 로 예상 용량 확인 (`~` 대략, `≈` 샘플 기반).
 6. `Convert Checked`.

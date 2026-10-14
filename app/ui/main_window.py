@@ -25,7 +25,7 @@ from ..core.utils import human_size, make_output_path
 from .dependency_dialog import DependencyDialog
 from .icons import app_icon, icon
 from .settings_dialog import SettingsDialog
-from .widgets import gif_options_panel  # noqa: F401  (팩토리 등록)
+from .widgets import gif_options_panel, mp4_options_panel  # noqa: F401  (팩토리 등록)
 from .widgets.frame_range_panel import FrameRangePanel
 from .widgets.loaders import ProbeLoader, SizeEstimator, ThumbnailLoader
 from .widgets.log_panel import LogPanel
@@ -293,8 +293,6 @@ class MainWindow(QMainWindow):
             str(self.settings.get("io/suffix", "", str)),
             bool(self.settings.get("io/overwrite", False, bool)),
         )
-        if self._converter.format_id == "gif" and self._options_panel is not None:
-            self._options_panel.set_options(self.settings.load_gif_options())
 
     def _save_settings(self) -> None:
         s = self.settings
@@ -308,9 +306,8 @@ class MainWindow(QMainWindow):
         s.last_output_dir = st["dir"]
         s.set("io/suffix", st["suffix"])
         s.set("io/overwrite", st["overwrite"])
-        if self._converter.format_id == "gif" and self._options_panel is not None:
-            opts = self._options_panel.get_options()
-            s.save_gif_options(opts)  # type: ignore[arg-type]
+        if self._options_panel is not None:
+            s.save_options(self._options_panel.get_options())
         s.sync()
 
     # ================================================================== 시작 점검
@@ -355,15 +352,19 @@ class MainWindow(QMainWindow):
     def _set_format(self, format_id: str) -> None:
         if not format_id or not OptionsPanelFactory.has(format_id):
             return
-        self._converter = registry.get(format_id)
         if self._options_panel is not None:
+            # 떠나는 포맷의 옵션은 보관해 두었다가 다시 돌아오면 복원한다
+            self.settings.save_options(self._options_panel.get_options())
             self._options_slot.removeWidget(self._options_panel)
             self._options_panel.deleteLater()
+            self._options_panel = None
+        self._converter = registry.get(format_id)
         panel = OptionsPanelFactory.create(format_id)
         self._options_slot.addWidget(panel)
         self._options_panel = panel
         if hasattr(panel, "set_hwaccel"):
             panel.set_hwaccel(self.settings.hwaccel)  # type: ignore[attr-defined]
+        panel.set_options(self.settings.load_options(self._converter))
         panel.options_changed.connect(self._options_changed)
         self.output_panel.suggest_suffix(format_id)
         self._current_changed(self.view.currentIndex().row())
@@ -534,6 +535,10 @@ class MainWindow(QMainWindow):
             key = make_est_key(it.path, it.effective_range(), options)
             if it.est_key == key and it.est_level in ("sampled", "exact"):
                 continue
+            if it.est_key and it.est_key != key and it.status in (ItemStatus.DONE, ItemStatus.FAILED,
+                                                                   ItemStatus.CANCELED, ItemStatus.SKIPPED):
+                # 변환 뒤 옵션·포맷·구간이 바뀌면 이전 결과 표시를 지우고 새 추정을 보여 준다
+                self.model.update_item(r, status=ItemStatus.IDLE, progress=0, message="", output_path=None)
             heuristic = self._converter.heuristic_size(it, options)
             self.model.update_item(r, est_key=key)
             self.model.set_estimate(r, key, heuristic, "heuristic" if heuristic is not None else "none")

@@ -680,9 +680,11 @@ class OptionsPanelFactory:
     def create(cls, format_id: str, parent=None) -> BaseOptionsPanel
 ```
 
-`GifOptionsPanel` 동작 세부
-- `width_spin`, `height_spin`: QSpinBox 0~8192, `specialValueText("Source")` 로 0 = 원본.
-  `lock_btn`: checkable QToolButton, 텍스트 `"Lock"`(ON) / `"Free"`(OFF). `reset_btn`: `"Reset to Source Size"` → 두 스핀을 0 으로.
+`CommonOptionsPanel` 동작 세부 (GIF · MP4 공통, v0.2.0 부터)
+- `width_spin`, `height_spin`: QSpinBox 0~8192, `specialValueText("Source")` 로 0 = 원본. **`setKeyboardTracking(False)`** —
+  한 글자씩 칠 때마다 반대 축이 바뀌지 않고, Enter · 포커스 이동 · 화살표 버튼으로 **입력이 확정된 뒤에만** 반대 축을 계산한다 (사용자 요청 2026-10-14).
+  배치는 `Width [ ] Height [ ] [Lock]` — 락 버튼은 Height 오른쪽.
+  `lock_btn`: checkable QToolButton, 텍스트 `"Lock"`(ON) / `"Free"`(OFF) + 자물쇠 아이콘. `reset_btn`: `"Reset to Source Size"` → 두 스핀을 0 으로.
 - **락 ON**: `width_spin.valueChanged` → `anchor = "width"`, `height = round(width / ref_aspect)` 를 `blockSignals(True)` 상태로 반영. 반대도 동일.
   `ref_aspect` 는 `set_reference_info` 로 받은 선택 항목 비율, 없으면 16:9. 0(Source) 입력 시 다른 축도 0.
   변환 시에는 anchor 축 값만 전달되고 다른 축은 `-2` (5.6) → **항목별 비율 유지**가 보장된다. UI 의 다른 축 값은 "선택 항목 기준 예시" 임을 툴팁으로 안내.
@@ -858,10 +860,36 @@ closeEvent ─▶ 러너 실행 중이면 QMessageBox.question("Conversion is ru
 
 ---
 
+### 5.9 MP4 변환기 (`converters/mp4_converter.py`) — v0.2.0 에서 구현
+
+GIF 와 공통인 필드는 `converters/common.py` 의 `VideoOptions`(width/height/lock/anchor/quality/fps_mode/fps_custom/target_size_mb/max_attempts/hwaccel)
+로 묶고, `GifOptions`/`Mp4Options` 가 상속한다. UI 도 `CommonOptionsPanel` 을 상속해 포맷 고유 행만 추가한다.
+
+```python
+@dataclass
+class Mp4Options(VideoOptions):
+    format_id = "mp4"; fps_custom = 30.0
+    preset: str = "medium"      # x264 preset (ultrafast … veryslow)
+    audio: str = "aac"          # "aac"(128 kbps 재인코딩) | "copy" | "none"
+```
+
+| 항목 | 규칙 |
+|------|------|
+| CRF | `crf = clamp(14, 40, round_half_up(36 - q*0.2))` → q100=16, q70=22, q50=26, q10=34 |
+| fps | `auto`/`source` = 원본 유지(필터 없음), `custom` = `min(src, custom)` 이고 원본과 다를 때만 `fps=` 필터 |
+| 크기 | `scale=W:H:flags=lanczos`. 락 축은 `-2`, 락 해제 정확값은 **짝수 보정**(yuv420p) |
+| 명령 | `ffmpeg -y -nostats -progress pipe:1 [-hwaccel auto] [-ss -t] -i src [-vf …] -c:v libx264 -crf N -preset P -pix_fmt yuv420p -movflags +faststart (-an \| -c:a copy \| -c:a aac -b:a 128k) out.mp4` |
+| 목표 용량 | 시도마다 `quality -= 20`(CRF +4), 2차부터 폭 85% |
+| 휴리스틱 | `2048 + w*h*fps*dur*bpp/8 + 128kbps*dur(오디오 있을 때)`, `bpp = 0.10 * 2^((23-crf)/6)` |
+| 샘플 추정 | 공통 경로 그대로 (구간 샘플을 같은 옵션으로 인코딩) |
+
+기본 오디오를 `aac` 재인코딩으로 둔 이유: mov 의 PCM 등 MP4 컨테이너가 담지 못하는 코덱이 흔하고, 구간 자르기와도 안전하다.
+`copy` 는 사용자가 코덱 호환을 아는 경우용.
+
 ## 11. 미래 확장 메모 (이번 범위 밖, 구조만 대비)
 
-- `WebPConverter`: `-c:v libwebp -lossless 0 -q:v {q} -loop 0`. 옵션이 GifOptions 와 거의 같아 `AnimatedImageOptions` 베이스로 묶을 수 있다.
-- `Mp4Converter`(재인코딩 / 리사이즈 / 구간 자르기): `-c:v libx264 -crf {crf} -preset {preset} -pix_fmt yuv420p`, 오디오 복사/제거 옵션. 짝수 크기 보정은 `-2` 로 이미 해결.
+- `WebPConverter`: `-c:v libwebp -lossless 0 -q:v {q} -loop 0`. `VideoOptions` + `CommonOptionsPanel` 을 그대로 상속하면 된다.
+- ~~`Mp4Converter`~~ → 5.9 에서 구현 (v0.2.0).
 - `ImageSequenceConverter`: `out_%04d.png`. 출력이 폴더가 되므로 `make_output_path` 에 `is_dir` 변형 필요.
 - gifski 엔진(2.2), 프리셋 저장/불러오기(JSON), 결과 파일 더블클릭으로 열기, 리스트 정렬, 휴리스틱 계수 자동 보정(실측 누적).
 

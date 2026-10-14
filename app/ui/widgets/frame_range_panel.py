@@ -207,7 +207,7 @@ class FrameRangePanel(QGroupBox):
         _, dur = rng.to_seconds(info.fps)
         text = f"Frames: {rng.frame_count} / {info.frame_count} ({dur:.1f} s)"
         if self._output_fps > 0:
-            text += f" → {output_frames(dur, self._output_fps)} GIF frames @ {self._output_fps:g} fps"
+            text += f" → {output_frames(dur, self._output_fps)} output frames @ {self._output_fps:g} fps"
         self.frames_label.setText(text)
 
     def _commit(self) -> None:

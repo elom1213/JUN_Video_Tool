@@ -202,7 +202,8 @@ class SizeEstimator(QObject):
                 for i, s in enumerate(samples):
                     if gen != self._gen:
                         return
-                    out_path = self.temp_dir() / f"est_{key[:16]}_{i}.gif"
+                    # 확장자가 곧 ffmpeg 의 먹서 선택이므로 변환기의 확장자를 그대로 쓴다
+                    out_path = self.temp_dir() / f"est_{key[:16]}_{i}{converter.extension}"
                     cmd = converter.build_sample_command(ffmpeg, item, options, s, out_path)
                     if cmd is None:
                         return
@@ -277,7 +278,7 @@ class SizeEstimator(QObject):
         self.cancel_all()
         try:
             if self._tmp_dir.exists():
-                for f in self._tmp_dir.glob("est_*.gif"):
+                for f in self._tmp_dir.glob("est_*.*"):
                     try:
                         f.unlink()
                     except OSError:

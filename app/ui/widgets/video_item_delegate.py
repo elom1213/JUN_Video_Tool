@@ -4,10 +4,9 @@
 """리스트 / 썸네일 두 모드를 그리는 델리게이트 (PLAN 6.3)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QModelIndex, QRect, QSize, Qt, QAbstractItemModel
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QStyle, QStyledItemDelegate, QStyleOptionButton,
-                               QStyleOptionViewItem, QWidget)
+from PySide6.QtCore import QEvent, QModelIndex, QRect, QRectF, QSize, Qt, QAbstractItemModel
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from ...config import constants as C
 from ...core.models import ItemStatus
@@ -55,12 +54,30 @@ class VideoItemDelegate(QStyledItemDelegate):
 
     def _draw_check(self, painter: QPainter, option: QStyleOptionViewItem, rect: QRect, checked: bool,
                     enabled: bool) -> None:
-        opt = QStyleOptionButton()
-        opt.rect = rect
-        opt.state = QStyle.StateFlag.State_Enabled if enabled else QStyle.StateFlag.State_None
-        opt.state |= QStyle.StateFlag.State_On if checked else QStyle.StateFlag.State_Off
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorCheckBox, opt, painter, option.widget)
+        """qss 의 QCheckBox 표시자와 같은 모양(주황 채움 + 흰 체크)을 직접 그린다."""
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if checked:
+            fill = QColor(C.Colors.ACCENT if enabled else "#6d4a3d")
+            painter.setPen(QPen(fill, 1))
+            painter.setBrush(fill)
+        else:
+            painter.setPen(QPen(QColor("#6a6a6a" if enabled else C.Colors.BORDER), 1))
+            painter.setBrush(QColor("#262626" if enabled else "#333333"))
+        painter.drawRoundedRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        if checked:
+            pen = QPen(QColor("#ffffff"), 2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            w, h = rect.width(), rect.height()
+            path = QPainterPath()
+            path.moveTo(rect.x() + w * 0.22, rect.y() + h * 0.53)
+            path.lineTo(rect.x() + w * 0.42, rect.y() + h * 0.72)
+            path.lineTo(rect.x() + w * 0.78, rect.y() + h * 0.32)
+            painter.drawPath(path)
+        painter.restore()
 
     def _status_color(self, status: ItemStatus) -> QColor:
         if status == ItemStatus.DONE:

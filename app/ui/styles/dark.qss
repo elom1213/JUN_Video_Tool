@@ -79,8 +79,33 @@ QProgressBar {
 }
 QProgressBar::chunk { background-color: #e8734a; border-radius: 2px; }
 
+/* 체크 상태가 한눈에 보이도록 표시자를 주황으로 채운다 (버튼 체크 색과 동일) */
 QCheckBox, QRadioButton { spacing: 6px; }
-QCheckBox::indicator, QRadioButton::indicator { width: 14px; height: 14px; }
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 15px; height: 15px;
+    background-color: #262626;
+    border: 1px solid #6a6a6a;
+}
+QCheckBox::indicator { border-radius: 3px; }
+QRadioButton::indicator { border-radius: 8px; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: #e8734a; }
+QCheckBox::indicator:checked {
+    background-color: #e8734a;
+    border-color: #e8734a;
+    image: url(@ICONS@/check_mark.svg);
+}
+QRadioButton::indicator:checked {
+    border: 1px solid #e8734a;
+    background-color: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+                                      stop: 0 #ffffff, stop: 0.28 #ffffff, stop: 0.36 #e8734a, stop: 1 #e8734a);
+}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { background-color: #333333; border-color: #444444; }
+QCheckBox::indicator:checked:disabled { background-color: #6d4a3d; border-color: #6d4a3d; }
+QRadioButton::indicator:checked:disabled {
+    border-color: #6d4a3d;
+    background-color: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+                                      stop: 0 #aaaaaa, stop: 0.28 #aaaaaa, stop: 0.36 #6d4a3d, stop: 1 #6d4a3d);
+}
 
 QSplitter::handle { background-color: #3a3a3a; }
 QSplitter::handle:horizontal { width: 4px; }

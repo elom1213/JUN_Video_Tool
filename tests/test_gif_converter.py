@@ -21,7 +21,7 @@ def _filter(cmd):
 
 
 def test_registry_has_gif():
-    assert registry.ids() == ["gif"]
+    assert registry.ids()[0] == "gif"
     assert isinstance(registry.get("gif"), GifConverter)
 
 

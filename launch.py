@@ -75,9 +75,9 @@ def run() -> int:
 
     app.setWindowIcon(app_icon())
 
-    qss = ROOT / "app" / "ui" / "styles" / "dark.qss"
-    if qss.is_file():
-        app.setStyleSheet(qss.read_text(encoding="utf-8"))
+    from app.ui.styles import load_stylesheet
+
+    app.setStyleSheet(load_stylesheet("dark"))
 
     from app.ui.main_window import MainWindow
 
