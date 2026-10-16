@@ -3,6 +3,8 @@
 - **Author**: Ji Hun Park (Junny / `Dnable_JunnyPark`)
 - **작성일**: 2026-10-14
 - **상태**: 설계 확정본. **2026-10-16 사용자 답변 · 추가 요청을 13장에 반영 — 13장이 앞 장과 충돌하면 13장이 우선한다.**
+- **구현**: **v0.3.0 구현 완료 (2026-10-16)**. P0 ~ P8 (P6b 오디오 · P7b 내보내기 포함). 유닛 테스트 82개,
+  `dev/check_draw.py` 통합 검증 ALL OK. 계획 대비 달라진 점과 미수행 항목은 **14장**.
 - **선행 문서**: [`PLAN.md`](PLAN.md) (v0.1.0 ~ v0.2.0 설계). 이 문서는 PLAN.md 의 **3장(디렉터리) · 6장(UI) 을 덧쓰는 증분 계획**이다.
   PLAN.md 의 코어(변환기 · 추정 · 러너)와 컨벤션(9장) · Win10 규칙(12장)은 그대로 유효하다.
 - **대상 환경**: PLAN.md 와 동일 — Windows 10 (21H2+) / 11, Python 3.11, PySide6 6.x (개발 PC 6.11.1), `bin/ffmpeg.exe`.
@@ -786,3 +788,45 @@ EXPORT_SUFFIX = "_draw"
 9. Erase 툴로 선 일부를 지우고 Undo 로 되돌린다.
 10. `Export…` 로 그림이 입혀진 MP4 · GIF 가 나오고, 그림이 Draw 탭에서 본 프레임과 같은 프레임에 있다 (testsrc 픽셀 검증).
 11. Convert 탭에 GIF 를 넣어 더 작은 GIF 로 변환되며, 원본 GIF 는 덮어써지지 않는다.
+
+---
+
+## 14. 구현 기록 (2026-10-16)
+
+### 14.1 검증 결과
+
+- `pytest -q` 82개 통과 (P0 76 + `test_draw_geometry.py` 5 + `frame_timecode` 1).
+- `python dev/check_draw.py` (오프스크린, testsrc 1280x720 29.97 fps 300 프레임, H.264 `-bf 3 -g 60` + AAC) **ALL OK**:
+  - 시크 정확성: 26개 시작 프레임에서 `FrameStream(start=i)` 첫 프레임 = 0번부터 순차 디코드한 i 번째 프레임 (MD5 일치).
+  - Draw 탭: `→` ×30 = 프레임 30, 이미지가 순차 프레임 30 과 일치, 타임코드 `00:00:01:00`. `Shift+←` −10, `End`, 끝에서 `←` ×12
+    캐시 미스 0. 재생 2 초에 60 프레임, 건너뛴 프레임 없음. 가운데 드래그 +40 px → +5 프레임, 그리지 않음.
+  - 좌드래그 스트로크(소스 px 저장), 마커, 제목 `*`, Erase 로 선 분할, `Ctrl+Z` 복원, 고스트 표시 · 끄기.
+  - 저장 → 새 창 → 같은 영상 선택 시 자동 로드, 브러시 설정 복원.
+  - Export MP4 · GIF(640 폭): 프레임 30 에만 빨간 선, 29 · 31 에는 없음 → **burn-in 프레임 = Draw 탭 프레임**.
+- 실제 출력 장치 오디오: 1 초에 990 ms 재생, suspend 중 진행 0, stop 시 프로세스 정리.
+- 수동 흐름 스크립트: 전환 Cancel 시 선택 복귀, Auto-save 전환 시 사이드카 저장, GIF 를 Draw 탭에서 재생(20 프레임),
+  현재 영상 제거 시 이웃 영상으로 전환, Convert 에서 GIF → GIF 변환 후 원본 크기 불변.
+
+### 14.2 계획 대비 달라진 점
+
+| 항목 | 계획 | 구현 | 이유 |
+|------|------|------|------|
+| 비활성 탭 액션 | Convert 는 `WindowShortcut` + `setEnabled` 토글 | 두 탭 모두 `set_active(bool)` 를 받고 탭이 **실행 상태와 합쳐** enabled 를 계산 | 변환 중 잠금과 탭 전환 토글이 서로 덮어쓰지 않게. 동작은 동일 |
+| 메뉴 이름 | 툴바와 같은 텍스트 | 메뉴는 `Remove Selected` · `Clear List` · `Invert Check`, 툴바는 `iconText` 로 짧게 | 5.8 메뉴 표의 이름을 따름 |
+| 타임코드 | `format_timecode(sec, fps)` | Draw 트랜스포트는 신규 `utils.frame_timecode(frame, fps)` (비드롭, 명목 fps = round(fps)) | 기존 함수는 실제 초 기준이라 29.97 의 프레임 30 이 `01:01` 이 된다. Convert 쪽 함수는 그대로 |
+| EOF 처리 | VFR 경고만 | `FrameProvider.eof_reached(gen, count)` → 컨트롤러가 마지막 프레임을 줄이고 로그 | ffprobe 의 `frame_count` 보다 실제 프레임이 적으면 없는 프레임을 영원히 기다리게 된다 |
+| 재생 타이머 | 간격 `round(1000/fps)` | `round(1000/fps/2)` (≥ 4 ms, PreciseTimer). 표시 시점은 여전히 `QElapsedTimer` 기준 | 간격이 프레임 길이와 같으면 틱 위상 때문에 2 프레임이 한 틱에 몰려 기준점 재설정이 잦다 |
+| 재생 스트림 시작 | `start_stream(frame)` 위치에서 | 이미 캐시된 앞부분은 건너뛰고 처음 비어 있는 프레임부터 연다. 캐시 히트 시크도 앞쪽 prefetch 를 이어서 채운다 | 재디코드 낭비 제거 (`←/→` 연타 반응) |
+| Draw 툴바 | 전부 텍스트 + 아이콘 | `Remove` · `Clear` · `List` · `Thumbnails` 는 아이콘만 (툴팁 · 메뉴에 이름) | 1280 px 폭에서 `Export…` · `Auto-save` 가 넘침 메뉴로 숨었다 |
+| 설정 접두사 | `export/<format_id>/options_json` | `AppSettings.load_options/save_options(…, prefix="export/")` 인자 추가 | Convert 와 같은 코드로 저장 |
+| 9.2 검증 방식 | testsrc 프레임 카운터를 픽셀로 읽기 | 순차 디코드 프레임의 MD5 와 비교 | 더 엄격(비트 단위)하고 글꼴 렌더에 의존하지 않는다 |
+
+### 14.3 참고 · 미수행
+
+- **하드웨어 디코드(`hwaccel=auto`) 는 소프트웨어 디코드와 픽셀이 다르다** (testsrc 기준 최대 68, 색차 보간 차이). 프레임 인덱스는
+  양쪽 모두 정확하다 (`-hwaccel auto` 로 시작 25 · 29 스트림이 순차 hw 디코드와 일치). 그래서 `check_draw.py` 는 앱의 hwaccel 모드와
+  같은 모드로 정답을 만든다.
+- `-fps_mode` 폴백(`-vsync 0`)과 hwaccel 폴백은 코드로 들어갔지만 이 PC 의 ffmpeg 9.0.2 에서는 발동하지 않아 실측하지 않았다.
+- 실영상 2종(H.264 mp4 · ProRes mov) 시크 검증, 1080p 메모리 실측(9.2), **Windows 10 실기 체크(9.3)** 는 미수행.
+- 장시간 재생의 오디오 드리프트 보정은 범위 밖(13.1) — 비디오가 디코드를 기다릴 때마다 오디오를 suspend/resume 하므로 짧은 멈칫은 맞는다.
+

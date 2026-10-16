@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 — 2026-10-16
+
+- **탭 분리**: 기존 변환 기능 전부를 `Convert` 탭으로 옮겼다. 동작 · 단축키 · 설정은 그대로이며 이전 설정이 복원된다.
+  `File` · `View` 메뉴는 활성 탭에 적용되고, 탭 전용 메뉴(`Convert` / `Draw`)는 그 탭이 활성일 때만 켜진다.
+  썸네일 캐시는 두 탭이 공유한다. 설계는 `docs/PLAN_DRAW_TAB.md`.
+- **Draw 탭 신설** — 프레임 단위 드로오버 리뷰:
+  - ffmpeg rawvideo 파이프 디코더 + 512 MB LRU 캐시. 프레임 정확 시크(순차 디코드와 비트 단위 일치 검증),
+    `←/→` · `Shift+←/→` · `Home/End`, 가운데 버튼 드래그 스크럽, 프레임을 건너뛰지 않는 재생.
+  - 오디오 재생(QtMultimedia, 음량 · 음소거). 디코드를 기다리는 동안 소리도 멈춘다.
+  - 좌드래그 그리기(색 스와치 8 + Custom, 두께 1~64 소스 px), 부분 지우개, 프레임별 Undo/Redo, Clear Frame / Clear All.
+  - Ghosting: 앞뒤 0~30 프레임, 투명도 5~100 %, 거리에 따라 옅어짐. 재생 중 유지.
+  - 영상 옆 사이드카 `<영상이름>.draw.json` 저장 · 자동 로드, Save As / Load, 해상도가 다르면 비율 변환, 미저장 확인 · Auto-save.
+  - `Export…`: 그림(옵션: 고스트 포함)을 입힌 MP4 / GIF 내보내기. Convert 의 옵션 패널 · 목표 용량 재시도 · hwaccel 폴백 재사용.
+- **GIF 입력**: Convert · Draw 두 탭 모두 `.gif` 를 받는다. GIF → GIF 재압축 시 출력 경로가 원본과 같으면 `_001` 을 붙여 덮어쓰지 않는다.
+- `MediaInfo.has_audio` (ffprobe `codec_type` · ffmpeg stderr).
+- `dev/check_draw.py`: Draw 탭 오프스크린 통합 검증 (시크 정확성 · 키 이동 · 재생 · 스크럽 · 그리기/지우개 · 저장/로드 · 내보내기 프레임 위치).
+- 아이콘 16개 추가 (트랜스포트 · 브러시 · 지우개 · 저장 · 음량 · 내보내기).
+
 ## 0.2.1 — 2026-10-16
 
 - **Python 3.14 지원**: 지원 범위를 3.11 ~ 3.14 로 확장 (`deps.json` `max_exclusive` 3.15). PySide6 는 6.10.1 부터 3.14 를
