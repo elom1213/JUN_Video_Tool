@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """순수 유틸리티: 프레임↔초 변환, 크기 계산, 출력 경로, 서브프로세스 플래그."""
 from __future__ import annotations
 
@@ -92,18 +92,22 @@ def resolve_dimensions(src_w: int, src_h: int, w: int | None, h: int | None) -> 
 
 
 def make_output_path(src: Path, out_dir: Path | None, suffix: str, ext: str, overwrite: bool) -> Path:
-    """<out_dir or src.parent>/<stem><suffix><ext>. overwrite=False 이고 존재하면 _001, _002 … 를 붙인다."""
+    """<out_dir or src.parent>/<stem><suffix><ext>. overwrite=False 이고 존재하면 _001, _002 … 를 붙인다.
+
+    후보가 원본 파일 자신이면(GIF → GIF, 같은 폴더, 빈 접미사) overwrite 여부와 무관하게 번호를 붙인다.
+    """
     src = Path(src)
     base_dir = Path(out_dir) if out_dir else src.parent
     if not ext.startswith("."):
         ext = "." + ext
+    src_key = normcase_path(src)
     candidate = base_dir / f"{src.stem}{suffix}{ext}"
-    if overwrite or not candidate.exists():
+    if normcase_path(candidate) != src_key and (overwrite or not candidate.exists()):
         return candidate
     n = 1
     while True:
         candidate = base_dir / f"{src.stem}{suffix}_{n:03d}{ext}"
-        if not candidate.exists():
+        if normcase_path(candidate) != src_key and (overwrite or not candidate.exists()):
             return candidate
         n += 1
 

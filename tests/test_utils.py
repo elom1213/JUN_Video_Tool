@@ -84,3 +84,11 @@ def test_human_size():
     assert human_size(1_887_436) == "1.8 MB"
     assert human_size(512) == "512 B"
     assert human_size(None) == ""
+
+
+def test_make_output_path_never_returns_source(tmp_path: Path):
+    src = tmp_path / "anim.gif"
+    src.write_bytes(b"x")
+    assert make_output_path(src, None, "", ".gif", overwrite=True) == tmp_path / "anim_001.gif"
+    assert make_output_path(src, None, "", ".gif", overwrite=False) == tmp_path / "anim_001.gif"
+    assert make_output_path(src, None, "_gif", ".gif", overwrite=True) == tmp_path / "anim_gif.gif"

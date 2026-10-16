@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """전역 상수 · 품질 매핑 · 휴리스틱 계수.
 
 PySide6 를 import 하지 않는다 (core 와 테스트에서 공유).
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 # ---------------------------------------------------------------------------
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv",
-    ".mpg", ".mpeg", ".flv", ".ts", ".mts",
+    ".mpg", ".mpeg", ".flv", ".ts", ".mts", ".gif",
 })
 
 # ---------------------------------------------------------------------------
@@ -42,6 +42,9 @@ class Colors:
     WARN = "#e0b955"
     TRACK = "#555555"
     SELECTION = "#4a3a34"
+    CANVAS_BG = "#1a1a1a"
+    GHOST_BEFORE = "#e05555"    # 예약 (고스트 틴트, PLAN_DRAW_TAB 11장)
+    GHOST_AFTER = "#4aa3e8"
 
 
 # ---------------------------------------------------------------------------
@@ -117,3 +120,37 @@ ESTIMATE_DEBOUNCE_MS = 500
 PREVIEW_DEBOUNCE_MS = 200
 THUMB_POOL_THREADS = 4
 THUMB_CACHE_SIZE = 500
+
+# ---------------------------------------------------------------------------
+# Draw 탭 (PLAN_DRAW_TAB 4.3, 13.6)
+# ---------------------------------------------------------------------------
+DRAW_DECODE_MAX_WIDTH = 1280      # 디코드 폭 상한 (px). 소스가 더 작으면 소스 폭
+DRAW_CACHE_BUDGET_MB = 512        # 프레임 캐시 메모리 상한
+DRAW_PREFETCH_FORWARD = 24        # 시크 뒤 앞으로 미리 디코드할 프레임 수
+DRAW_PREFETCH_BACKWARD = 12       # 뒤로 갈 때 이만큼 앞에서 시작해 디코드
+DRAW_PLAY_AHEAD = 48              # 재생 중 디코더가 표시 프레임보다 앞서 가도 되는 최대 프레임 수
+DRAW_SCRUB_PX_PER_FRAME = 8       # 가운데 드래그 스크럽 감도
+DRAW_SCRUB_PX_MIN, DRAW_SCRUB_PX_MAX = 2, 40
+DRAW_WIDTH_DEFAULT = 4.0          # 브러시 두께 (소스 px)
+DRAW_WIDTH_MIN, DRAW_WIDTH_MAX = 1.0, 64.0
+DRAW_COLOR_DEFAULT = "#e8734a"
+DRAW_SWATCHES = ("#e8734a", "#ffffff", "#000000", "#e05555", "#e0b955", "#6cc070", "#4aa3e8", "#c06ce0")
+DRAW_MIN_POINT_DIST_PX = 1.5      # 화면 px. 이보다 가까운 점은 버린다
+DRAW_ERASER_DEFAULT = 32.0        # 지우개 지름 (소스 px)
+DRAW_ERASER_MIN, DRAW_ERASER_MAX = 4.0, 256.0
+GHOST_BEFORE_DEFAULT = 2
+GHOST_AFTER_DEFAULT = 2
+GHOST_SPAN_MAX = 30
+GHOST_OPACITY_DEFAULT = 0.35      # 0.05 ~ 1.0
+DRAW_FILE_SUFFIX = ".draw.json"
+DRAW_FORMAT_NAME = "jun-video-tool-drawing"
+DRAW_FORMAT_VERSION = 1
+
+# 오디오 (PLAN_DRAW_TAB 13.1)
+AUDIO_RATE = 48000
+AUDIO_CHANNELS = 2
+AUDIO_PUSH_INTERVAL_MS = 10
+DRAW_VOLUME_DEFAULT = 80
+
+# 그림 입힌 영상 내보내기 (PLAN_DRAW_TAB 13.4)
+EXPORT_SUFFIX = "_draw"

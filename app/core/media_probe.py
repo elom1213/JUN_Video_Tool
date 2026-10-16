@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """영상 메타데이터 프로브 (PLAN 5.2). ffprobe JSON 우선, 없으면 ffmpeg stderr 파싱."""
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 VIDEO_RE = re.compile(r"Stream #\d+:\d+.*?Video:\s*(\w+).*?,\s*(\d{2,5})x(\d{2,5})")
 FPS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*fps")
 TBR_RE = re.compile(r"(\d+(?:\.\d+)?)\s*tbr")
+AUDIO_RE = re.compile(r"Stream #\d+:\d+.*?Audio:")
 
 
 class ProbeError(Exception):
@@ -47,9 +48,12 @@ def parse_ffprobe_json(text: str, size_fallback: int) -> MediaInfo:
     except json.JSONDecodeError as exc:
         raise ProbeError(f"ffprobe returned invalid JSON: {exc}") from exc
     streams = data.get("streams") or []
-    if not streams:
+    # codec_type 이 있으면 첫 video 스트림을 고르고, 없으면(옛 출력 · -select_streams v:0) 첫 스트림을 비디오로 본다
+    videos = [s for s in streams if s.get("codec_type", "video") == "video"]
+    if not videos:
         raise ProbeError("No video stream found.")
-    st = streams[0]
+    st = videos[0]
+    has_audio = any(s.get("codec_type") == "audio" for s in streams)
     fmt = data.get("format") or {}
 
     width = int(st.get("width") or 0)
@@ -89,7 +93,7 @@ def parse_ffprobe_json(text: str, size_fallback: int) -> MediaInfo:
     return MediaInfo(
         width=width, height=height, fps=fps, duration=duration,
         frame_count=frame_count, codec=str(st.get("codec_name") or "unknown"),
-        size_bytes=size_bytes,
+        size_bytes=size_bytes, has_audio=has_audio,
     )
 
 
@@ -120,13 +124,14 @@ def parse_ffmpeg_stderr(text: str, size_bytes: int) -> MediaInfo:
     return MediaInfo(
         width=width, height=height, fps=fps, duration=duration,
         frame_count=max(1, int(round(duration * fps))), codec=codec, size_bytes=size_bytes,
+        has_audio=bool(AUDIO_RE.search(text)),
     )
 
 
 def _probe_ffprobe(ffprobe: Path, path: Path) -> MediaInfo:
     cmd = [
-        str(ffprobe), "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,nb_frames,codec_name,duration",
+        str(ffprobe), "-v", "error",
+        "-show_entries", "stream=codec_type,width,height,r_frame_rate,avg_frame_rate,nb_frames,codec_name,duration",
         "-show_entries", "format=duration,size",
         "-of", "json", str(path),
     ]

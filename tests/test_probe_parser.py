@@ -68,3 +68,24 @@ def test_parse_ffmpeg_stderr():
 def test_parse_ffmpeg_stderr_no_video():
     with pytest.raises(ProbeError):
         parse_ffmpeg_stderr("Duration: 00:00:01.00\n Stream #0:0: Audio: aac", 0)
+
+
+def test_parse_ffprobe_json_picks_video_and_audio_flag():
+    payload = {"streams": [{"codec_type": "audio", "codec_name": "aac"},
+                           {"codec_type": "video", "width": 320, "height": 240, "codec_name": "h264",
+                            "avg_frame_rate": "10/1", "nb_frames": "20"}],
+               "format": {"duration": "2.0", "size": "100"}}
+    info = parse_ffprobe_json(json.dumps(payload), 1)
+    assert (info.width, info.codec, info.has_audio) == (320, "h264", True)
+    gif = {"streams": [{"codec_type": "video", "width": 320, "height": 240, "codec_name": "gif",
+                        "avg_frame_rate": "10/1", "nb_frames": "20"}], "format": {"duration": "2.0"}}
+    info = parse_ffprobe_json(json.dumps(gif), 1)
+    assert info.has_audio is False and info.frame_count == 20
+    with pytest.raises(ProbeError):
+        parse_ffprobe_json(json.dumps({"streams": [{"codec_type": "audio"}], "format": {}}), 0)
+
+
+def test_parse_ffmpeg_stderr_audio_flag():
+    assert parse_ffmpeg_stderr(SAMPLE_STDERR, 1).has_audio is True
+    no_audio = "\n".join(ln for ln in SAMPLE_STDERR.splitlines() if "Audio:" not in ln)
+    assert parse_ffmpeg_stderr(no_audio, 1).has_audio is False

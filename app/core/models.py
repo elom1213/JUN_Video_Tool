@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """코어 데이터 모델 (PLAN 5.1). PySide6 비의존."""
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class MediaInfo:
     frame_count: int
     codec: str
     size_bytes: int
+    has_audio: bool = False      # 오디오 스트림 존재 (Draw 탭 재생 · 내보내기)
 
     @property
     def aspect(self) -> float:
