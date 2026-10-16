@@ -41,6 +41,17 @@ def format_timecode(sec: float, fps: float) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
 
 
+def frame_timecode(frame: int, fps: float) -> str:
+    """프레임 번호 → 비드롭 타임코드 "HH:MM:SS:FF" (명목 fps = round(fps)). 29.97 의 프레임 30 → 00:00:01:00."""
+    nominal = max(1, int(round(fps))) if fps > 0 else 1
+    frame = max(0, int(frame))
+    ff = frame % nominal
+    total = frame // nominal
+    hh, rem = divmod(total, 3600)
+    mm, ss = divmod(rem, 60)
+    return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
+
+
 def format_duration(sec: float) -> str:
     """초 → "MM:SS" 또는 "H:MM:SS" (리스트 info 텍스트용)."""
     sec = max(0, int(round(sec)))

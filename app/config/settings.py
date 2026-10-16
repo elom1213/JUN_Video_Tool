@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """QSettings 래퍼 (PLAN 6.12). 포맷별 옵션은 `<format_id>/options_json` 한 키에 JSON 으로 저장한다."""
 from __future__ import annotations
 
@@ -66,16 +66,17 @@ class AppSettings:
         self.set("estimate/enabled", bool(v))
 
     # ------------------------------------------------------------------ 포맷별 옵션
-    def load_options(self, converter: BaseConverter) -> ConvertOptions:
+    def load_options(self, converter: BaseConverter, prefix: str = "") -> ConvertOptions:
+        """prefix 가 있으면 `<prefix><format_id>/options_json` (Draw 내보내기: "export/")."""
         opts = converter.default_options()
-        raw = str(self.get(f"{converter.format_id}/options_json", "", str) or "")
+        raw = str(self.get(f"{prefix}{converter.format_id}/options_json", "", str) or "")
         data: dict = {}
         if raw:
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 data = {}
-        elif converter.format_id == "gif":
+        elif converter.format_id == "gif" and not prefix:
             data = self._legacy_gif_dict()
         for f in fields(type(opts)):
             if f.name in _SKIP_FIELDS or f.name not in data:
@@ -101,9 +102,9 @@ class AppSettings:
             opts.hwaccel = self.hwaccel  # type: ignore[attr-defined]
         return opts
 
-    def save_options(self, opts: ConvertOptions) -> None:
+    def save_options(self, opts: ConvertOptions, prefix: str = "") -> None:
         d = {k: v for k, v in asdict(opts).items() if k not in _SKIP_FIELDS}
-        self.set(f"{opts.format_id}/options_json", json.dumps(d, default=str))
+        self.set(f"{prefix}{opts.format_id}/options_json", json.dumps(d, default=str))
 
     def _legacy_gif_dict(self) -> dict:
         """v0.1.0 의 gif/<field> 키 호환."""

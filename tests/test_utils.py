@@ -92,3 +92,12 @@ def test_make_output_path_never_returns_source(tmp_path: Path):
     assert make_output_path(src, None, "", ".gif", overwrite=True) == tmp_path / "anim_001.gif"
     assert make_output_path(src, None, "", ".gif", overwrite=False) == tmp_path / "anim_001.gif"
     assert make_output_path(src, None, "_gif", ".gif", overwrite=True) == tmp_path / "anim_gif.gif"
+
+
+def test_frame_timecode_non_drop():
+    from app.core.utils import frame_timecode
+    assert frame_timecode(30, 29.97) == "00:00:01:00"
+    assert frame_timecode(29, 29.97) == "00:00:00:29"
+    assert frame_timecode(0, 25) == "00:00:00:00"
+    assert frame_timecode(25 * 3661 + 3, 25) == "01:01:01:03"
+    assert frame_timecode(5, 0) == "00:00:05:00"
