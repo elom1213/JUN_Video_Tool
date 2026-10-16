@@ -2,8 +2,8 @@
 
 - **Author**: Ji Hun Park (Junny / `Dnable_JunnyPark`)
 - **작성일**: 2026-10-16
-- **상태**: **구현 완료 (2026-10-16)** — 3.1~3.7 반영, 3.11.9 에서 pytest 46 passed, 거부 경로 · 앱 다이얼로그 확인(V0).
-  **V1~V9 (Python 3.14 / 3.14t 실기 검증) 는 미수행** — 이 PC 에 3.14 가 없다. 3.14 가 있는 PC 에서 5장을 따라 수행한다.
+- **상태**: **구현 · 검증 완료 (2026-10-16)** — 3.1~3.7 반영, V0~V9 수행 결과는 5.1 절.
+  V5 · V6 은 offscreen 헤드리스 스모크로 대체했다. 실제 창을 눈으로 보는 확인(스타일 · 체크 표시 · `RangeSlider`)은 남아 있다.
 - **선행 문서**: [`PLAN.md`](PLAN.md) 12장(Win10 호환 규칙) · 13장(의존성 일괄 설치). 이 문서는 13장의 **Python 버전 게이트**를
   고치는 증분 계획이다. 코어 · UI · 변환 로직은 건드리지 않는다.
 - **이 문서의 목표**: 이 문서만 읽고 바로 작업을 시작할 수 있어야 한다. 바뀌는 파일 · 함수 시그니처 · 문자열 · 테스트 · 검증 절차 ·
@@ -311,6 +311,26 @@ def test_python_ok_matches_running_interpreter():
 
 V5~V6 은 PySide6 6.12.0 이 개발 PC 의 6.11.1 과 다른 버전이라는 점에서 **UI 회귀 확인**을 겸한다. 스타일(`dark.qss`) · 체크 표시(주황) ·
 `RangeSlider` 페인트가 달라 보이면 PLAN.md 10장 리스크 항목으로 넘긴다.
+
+### 5.1 수행 결과 (2026-10-16, 이 PC)
+
+3.14 는 시스템에 설치하지 않고 nuget.org 의 `python` / `python-freethreaded` **3.14.8** 패키지를 임시 폴더에 풀어 썼다.
+
+| 단계 | 결과 |
+|------|------|
+| V0 | `py -3.11 -m pytest -q` → 46 passed |
+| V1 | `Python 3.14.8` (MSC v.1944 64 bit), `Python 3.14.8 free-threading build` 확보 |
+| V2 | `.venv314` 에서 `bootstrap.py --check --json` → Python `3.14.8` `OK`, PySide6 `Missing`, 종료 코드 0 |
+| V3 | `bootstrap.py --no-binaries -y` → **PySide6 6.12.0** (Essentials · Addons 6.12.0, shiboken6 6.12.0) 설치, 리포트 전 행 `OK` |
+| V4 | 3.14.8 로 `pytest -q -W default` → 46 passed, 경고 없음 |
+| V5 | `QT_QPA_PLATFORM=offscreen` 에서 `MainWindow` 생성(`JUN Video Tool v0.2.1`), `DependencyDialog` 4행 전부 `OK` 초록(`#00ff00`). nuget 배포본은 `tkinter` 없음 → `launch._ask_yes_no()` 의 `input()` 폴백 대상 (설계대로) |
+| V6 | ffmpeg `testsrc` 로 만든 영상 2개(640x360@30, 320x240@24): probe · 썸네일 · 구간(10~50 프레임) 지정 후 GIF 2개 + MP4 2개 변환 성공. 출력 용량이 3.11.9 + PySide6 6.11.1 실행과 **바이트 단위로 동일**. Traceback 없음 |
+| V7 | `python3.14t bootstrap.py --check` → `Python 3.14.8t (free-threaded) is a free-threaded build, which PySide6 does not support. Install the standard (non free-threaded) Python 3.11-3.14 64-bit.` 종료 코드 2, JSON `status` `Unsupported` |
+| V8 | `py -3.11 bootstrap.py --check` → 전 행 `OK`, 종료 코드 0. 같은 헤드리스 스모크도 3.11 에서 통과 |
+| V9 | `.venv314` 와 임시 Python 삭제, `git status` 깨끗함 |
+
+관찰 (3.14 회귀 아님): `-W default` 로 돌리면 `job_runner.py:100` (`_exec`) 에서 `ResourceWarning: unclosed file <_io.TextIOWrapper …>`
+가 작업당 1회 나온다. **3.11 에서도 똑같이 나오는 기존 현상**이며 기본 경고 필터에서는 보이지 않는다. 이번 범위 밖 — 따로 고친다.
 
 ---
 
