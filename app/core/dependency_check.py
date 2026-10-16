@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """의존성 상태 점검 (PLAN 13장). 표준 라이브러리만 사용 — PySide6 가 없을 때도 import 가능해야 한다."""
 from __future__ import annotations
 
+import json
 import re
+import sys
+import sysconfig
 from dataclasses import dataclass, asdict
 from importlib import metadata
 from pathlib import Path
@@ -22,7 +25,7 @@ class DependencyStatus:
     kind: str              # "python" | "pip" | "binary"
     required: str
     found: str
-    status: str            # "OK" | "Missing" | "Outdated" | "Unknown"
+    status: str            # "OK" | "Missing" | "Outdated" | "Unsupported" | "Unknown"
     location: str
 
     def to_dict(self) -> dict:
@@ -154,11 +157,45 @@ def missing_pip_packages() -> list[str]:
     return [d.name for d in check_pip() if d.status != "OK"]
 
 
-def check_all() -> list[DependencyStatus]:
-    import sys
+_DEFAULT_PY_SPEC = {"min": "3.11", "max_exclusive": "3.15"}
 
-    py = DependencyStatus("Python", "python", ">=3.11,<3.14",
-                          ".".join(str(x) for x in sys.version_info[:3]),
-                          "OK" if (3, 11) <= sys.version_info[:2] < (3, 14) else "Outdated",
-                          sys.executable)
-    return [py] + check_pip() + check_binaries()
+
+def python_spec() -> dict:
+    """deps.json 의 "python" 항목. 파일이 없거나 깨졌으면 기본값. (bootstrap 과 앱이 같은 소스를 본다)"""
+    try:
+        with open(tool_root() / "deps.json", encoding="utf-8") as f:
+            spec = json.load(f).get("python") or {}
+    except (OSError, ValueError):
+        spec = {}
+    return {**_DEFAULT_PY_SPEC, **spec}
+
+
+def is_free_threaded() -> bool:
+    """free-threaded(GIL 없는) 빌드면 True. PySide6 abi3 휠은 이 빌드에 설치되지 않는다."""
+    return sysconfig.get_config_var("Py_GIL_DISABLED") == 1
+
+
+def python_status(spec: dict | None = None,
+                  version: tuple[int, ...] | None = None,
+                  free_threaded: bool | None = None) -> DependencyStatus:
+    """현재 인터프리터가 지원 범위인지. 인자는 테스트용 — 생략하면 실행 중인 인터프리터를 본다."""
+    spec = {**_DEFAULT_PY_SPEC, **(spec or python_spec())}
+    v = tuple(version if version is not None else sys.version_info[:3])
+    ft = is_free_threaded() if free_threaded is None else free_threaded
+    lo = version_tuple(spec["min"])
+    hi = version_tuple(spec["max_exclusive"])
+    required = f">={spec['min']},<{spec['max_exclusive']}"
+    found = ".".join(str(x) for x in v) + ("t (free-threaded)" if ft else "")
+    if ft:
+        status = "Unsupported"
+    elif _cmp(v[: len(lo)], lo) < 0:
+        status = "Outdated"
+    elif _cmp(v[: len(hi)], hi) >= 0:
+        status = "Unsupported"
+    else:
+        status = "OK"
+    return DependencyStatus("Python", "python", required, found, status, sys.executable)
+
+
+def check_all() -> list[DependencyStatus]:
+    return [python_status()] + check_pip() + check_binaries()

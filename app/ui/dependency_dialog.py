@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """의존성 상태 · 설치 다이얼로그 (PLAN 13.5). bootstrap.py 를 QProcess 로 실행한다."""
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ class DependencyDialog(QDialog):
                     status = str(val)
                     if status == "OK":
                         cell.setForeground(Qt.GlobalColor.green)
-                    elif status in ("Missing", "Outdated", "FAILED"):
+                    elif status in ("Missing", "Outdated", "Unsupported", "FAILED"):
                         cell.setForeground(Qt.GlobalColor.yellow if status != "FAILED" else Qt.GlobalColor.red)
                         if it.get("required") != "optional":
                             has_missing = True

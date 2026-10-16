@@ -5,7 +5,7 @@
 - **상태**: 설계 확정본 → **v0.1.0 구현 완료 (2026-10-14)**. P0~P9 전 단계 구현. 유닛 테스트 35개 통과,
   합성 영상으로 헤드리스 end-to-end(프로브 → 썸네일 → 샘플 추정 → 병렬 변환 → 목표 용량 재시도) 검증 완료.
   Windows 10 실기 체크리스트(12.3)는 미수행 — Win10 머신이 생기면 수행한다.
-- **대상 환경**: **Windows 10 (21H2 이상) 과 Windows 11 양쪽**, Python 3.11, PySide6 6.x (개발 PC 는 Win11 + 6.11.1), ffmpeg (별도 확보 — 4장). 호환 규칙은 12장
+- **대상 환경**: **Windows 10 (21H2 이상) 과 Windows 11 양쪽**, Python 3.11 ~ 3.14 (v0.2.1 부터, [`PLAN_PY314.md`](PLAN_PY314.md)), PySide6 6.x (개발 PC 는 Win11 + 6.11.1), ffmpeg (별도 확보 — 4장). 호환 규칙은 12장
 
 ---
 
@@ -904,10 +904,10 @@ class Mp4Options(VideoOptions):
 | 구성 | 요구 | 비고 |
 |------|------|------|
 | Windows | **10 버전 21H2 (빌드 19044) 이상**, 11 | Qt 6.9+ 의 최소 지원 버전. 그 이전 Win10 을 지원해야 하면 `PySide6==6.8.*` 로 고정 (Win10 1809+) |
-| Python | 3.11.x 64-bit | Win10 지원. `python.org` 설치본 또는 PyInstaller 번들 |
+| Python | 3.11 ~ 3.14 64-bit, 표준 빌드 (`deps.json` `>=3.11,<3.15`) | Win10 지원. `python.org` 설치본 또는 PyInstaller 번들. free-threaded(3.14t) 는 PySide6 휠이 없어 거부 — `PLAN_PY314.md` |
 | PySide6 | `>=6.8,<7` 를 `requirements.txt` 에 고정 | 메이저 7 로 자동 승격 금지 |
 | ffmpeg | 정적 빌드(gyan.dev / BtbN) 7.x | Win10/11 공통. `bin/` 배치 또는 imageio-ffmpeg |
-| VC 런타임 | Python 3.11 은 UCRT 사용 → Win10 에 기본 포함 | 별도 설치 불필요 |
+| VC 런타임 | Python 3.11+ 는 UCRT 사용 → Win10 에 기본 포함 | 별도 설치 불필요 |
 
 ### 12.2 코드 규칙
 
@@ -942,14 +942,14 @@ class Mp4Options(VideoOptions):
 
 ### 13.1 목표
 
-새 PC 에 **Python 3.11 만 있으면** `setup.bat` 더블클릭 한 번으로 PySide6 등 pip 패키지와 ffmpeg/ffprobe 바이너리가 설치되고,
+새 PC 에 **Python 3.11 ~ 3.14 중 하나만 있으면** `setup.bat` 더블클릭 한 번으로 PySide6 등 pip 패키지와 ffmpeg/ffprobe 바이너리가 설치되고,
 앱이 바로 실행된다. 이미 설치된 항목은 건너뛰고(멱등), 결과를 표로 보여 준다.
 
 ### 13.2 설치 대상 (`deps.json`)
 
 ```json
 {
-  "python": {"min": "3.11", "max_exclusive": "3.14"},
+  "python": {"min": "3.11", "max_exclusive": "3.15"},
   "pip": {"requirements": "requirements.txt", "dev_requirements": "requirements-dev.txt"},
   "binaries": [
     {
@@ -1033,7 +1033,7 @@ where py >nul 2>nul && (py -3 bootstrap.py %*) || (python bootstrap.py %*)
 pause
 ```
 - `run.bat`: `.venv` 가 있으면 `.venv\Scripts\python.exe launch.py`, 없으면 `py -3 launch.py` (`--venv` 로 설치한 경우 대응).
-- README 설치 절차는 세 줄이다: ① Python 3.11 설치 ② `setup.bat` 더블클릭 ③ `run.bat` 더블클릭.
+- README 설치 절차는 세 줄이다: ① Python 3.11 ~ 3.14 설치 ② `setup.bat` 더블클릭 ③ `run.bat` 더블클릭.
 
 ### 13.7 테스트 (`tests/test_bootstrap.py`, 네트워크 없이)
 

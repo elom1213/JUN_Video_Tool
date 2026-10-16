@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — 2026-10-16
+
+- **Python 3.14 지원**: 지원 범위를 3.11 ~ 3.14 로 확장 (`deps.json` `max_exclusive` 3.15). PySide6 는 6.10.1 부터 3.14 를
+  지원하며 기존 `PySide6>=6.8,<7` 그대로 3.14 에서는 6.12.0 이 설치된다. 설계 · 검증 절차는 `docs/PLAN_PY314.md`.
+- Python 버전 판정을 `dependency_check.python_status()` 로 통합. 앱 안 `Check Dependencies…` 와 `bootstrap.py` 가 같은
+  `deps.json` 값을 본다 (이전에는 앱 쪽에 3.14 미만이 하드코딩돼 있었다).
+- free-threaded 빌드(3.13t / 3.14t) 는 PySide6 휠이 없으므로 `Unsupported` 로 표시하고 표준 빌드 설치를 안내한다.
+- 지원 범위 밖 Python 안내 문구에 설치할 버전 범위(`3.11-3.14`)를 직접 적는다.
+
 ## 0.2.0 — 2026-10-14
 
 - **MP4 (H.264) 출력 추가**: 크기(종횡비 락) · 품질(CRF 매핑) · FPS(원본 유지 / Custom) · x264 preset ·

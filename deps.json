@@ -1,5 +1,5 @@
 {
-  "python": {"min": "3.11", "max_exclusive": "3.14"},
+  "python": {"min": "3.11", "max_exclusive": "3.15"},
   "pip": {"requirements": "requirements.txt", "dev_requirements": "requirements-dev.txt"},
   "binaries": [
     {

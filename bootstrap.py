@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """의존성 일괄 설치 (PLAN 13.3). 표준 라이브러리만 사용한다.
 
     python bootstrap.py [--check] [--venv] [--dev] [--no-pip] [--no-binaries]
@@ -9,6 +9,8 @@
 --json 모드 프로토콜 (DependencyDialog 가 파싱):
     PROGRESS <0-100>
     REPORT_JSON {"ok": bool, "items": [{name, kind, required, found, status, location}, ...]}
+    status: "OK" | "Missing" | "Outdated" | "Unsupported" | "FAILED"
+    (Python 행의 "Unsupported" 는 지원 범위 위이거나 free-threaded 빌드라는 뜻)
 """
 from __future__ import annotations
 
@@ -83,12 +85,9 @@ def safe_basename(member_name: str) -> str:
 
 
 def python_ok(spec: dict) -> tuple[bool, str]:
-    cur = ".".join(str(x) for x in sys.version_info[:3])
-    lo = dc.version_tuple(spec.get("min", "3.11"))
-    hi = dc.version_tuple(spec.get("max_exclusive", "4.0"))
-    v = sys.version_info[:3]
-    ok = lo <= v[: len(lo)] and v[: len(hi)] < hi
-    return ok, cur
+    """(지원 여부, 표시용 버전 문자열). 판정은 dependency_check.python_status() 와 같다."""
+    st = dc.python_status(spec)
+    return st.status == "OK", st.found
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +309,7 @@ def ensure_venv_and_reexec(argv: list[str]) -> None:
 # ---------------------------------------------------------------------------
 def build_report(deps: dict, extra_status: dict[str, dict] | None = None) -> list[dict]:
     items: list[dict] = []
-    ok, cur = python_ok(deps.get("python", {}))
-    items.append({"name": "Python", "kind": "python",
-                  "required": f">={deps.get('python', {}).get('min', '3.11')},<{deps.get('python', {}).get('max_exclusive', '3.14')}",
-                  "found": cur, "status": "OK" if ok else "Outdated", "location": sys.executable})
+    items.append(dc.python_status(deps.get("python", {})).to_dict())
     for d in dc.check_pip(ROOT / deps.get("pip", {}).get("requirements", "requirements.txt")):
         items.append(d.to_dict())
     for entry in deps.get("binaries", []):
@@ -385,10 +381,18 @@ def main(argv: list[str] | None = None) -> int:
 
     deps = load_deps()
 
-    ok_py, cur = python_ok(deps.get("python", {}))
-    if not ok_py:
-        say(f"Python {cur} is not supported. Install Python {deps.get('python', {}).get('min', '3.11')} "
-            f"(below {deps.get('python', {}).get('max_exclusive', '3.14')}).")
+    spec = deps.get("python", {})
+    st = dc.python_status(spec)
+    if st.status != "OK":
+        lo_s = spec.get("min", dc._DEFAULT_PY_SPEC["min"])
+        hi = dc.version_tuple(spec.get("max_exclusive", dc._DEFAULT_PY_SPEC["max_exclusive"]))
+        newest = f"{hi[0]}.{hi[1] - 1}" if len(hi) >= 2 and hi[1] > 0 else lo_s
+        if dc.is_free_threaded():
+            say(f"Python {st.found} is a free-threaded build, which PySide6 does not support. "
+                f"Install the standard (non free-threaded) Python {lo_s}-{newest} 64-bit.")
+        else:
+            say(f"Python {st.found} is not supported. Install Python {lo_s}-{newest} 64-bit "
+                f"(supported range {st.required}).")
         items = build_report(deps)
         if _JSON:
             print("REPORT_JSON " + json.dumps({"ok": False, "items": items}), flush=True)

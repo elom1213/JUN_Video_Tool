@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """bootstrap / dependency_check 테스트 (네트워크 없음)."""
 import json
+import sys
 import zipfile
 from pathlib import Path
 
 import bootstrap
-from app.core.dependency_check import parse_requirements, satisfies, version_tuple
+from app.core.dependency_check import parse_requirements, python_status, satisfies, version_tuple
 
 
 def test_version_tuple_and_satisfies():
@@ -49,6 +50,7 @@ def test_extract_members(tmp_path: Path):
 def test_deps_json_schema():
     deps = json.loads((bootstrap.ROOT / "deps.json").read_text(encoding="utf-8"))
     assert deps["python"]["min"] == "3.11"
+    assert deps["python"]["max_exclusive"] == "3.15"
     ff = deps["binaries"][0]
     assert ff["name"] == "ffmpeg"
     assert set(ff["files"]) == {"ffmpeg.exe", "ffprobe.exe"}
@@ -62,3 +64,30 @@ def test_report_json_keys():
     for it in items:
         assert set(it) == {"name", "kind", "required", "found", "status", "location"}
     assert items[0]["name"] == "Python"
+
+
+_SPEC = {"min": "3.11", "max_exclusive": "3.15"}
+
+
+def test_python_status_range():
+    assert python_status(_SPEC, (3, 11, 9), False).status == "OK"
+    assert python_status(_SPEC, (3, 13, 1), False).status == "OK"
+    assert python_status(_SPEC, (3, 14, 0), False).status == "OK"
+    assert python_status(_SPEC, (3, 14, 2), False).status == "OK"
+    assert python_status(_SPEC, (3, 10, 11), False).status == "Outdated"
+    assert python_status(_SPEC, (3, 15, 0), False).status == "Unsupported"
+    assert python_status(_SPEC, (3, 14, 0), True).status == "Unsupported"
+
+
+def test_python_status_fields():
+    st = python_status(_SPEC, (3, 14, 0), True)
+    assert st.required == ">=3.11,<3.15"
+    assert st.found == "3.14.0t (free-threaded)"
+    assert st.kind == "python" and st.name == "Python"
+    assert python_status(_SPEC, (3, 14, 0), False).found == "3.14.0"
+
+
+def test_python_ok_matches_running_interpreter():
+    ok, cur = bootstrap.python_ok(_SPEC)
+    assert cur.startswith(".".join(str(x) for x in sys.version_info[:3]))
+    assert ok == (python_status(_SPEC).status == "OK")

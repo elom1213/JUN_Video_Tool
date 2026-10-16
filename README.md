@@ -8,7 +8,7 @@ PySide6 + ffmpeg. Windows 10 (21H2+) / 11.
 
 ## 설치 (3단계)
 
-1. **Python 3.11** 을 설치한다 (python.org, "Add to PATH" 체크).
+1. **Python 3.11 ~ 3.14** (64-bit, 표준 빌드) 를 설치한다 (python.org, "Add to PATH" 체크). free-threaded(3.14t) 빌드는 지원하지 않는다.
 2. **`setup.bat`** 을 더블클릭한다. PySide6 를 pip 로 설치하고, ffmpeg/ffprobe 를 `bin/` 에 내려받아 검증한다 (약 90 MB).
 3. **`run.bat`** 을 더블클릭해 실행한다.
 
@@ -22,6 +22,9 @@ python bootstrap.py --pip-index-url https://<mirror>/simple
 python bootstrap.py --check          # 상태만 확인
 python bootstrap.py --venv           # .venv 에 격리 설치 (run.bat 이 자동 인식)
 ```
+
+여러 Python 이 설치돼 있으면 `setup.bat` 은 가장 최신 3.x 를 쓴다. 특정 버전을 쓰려면 `py -3.11 bootstrap.py` 처럼 직접 실행하거나
+`set PY_PYTHON=3.11` 을 둔다.
 
 ffmpeg 를 직접 구했다면 `ffmpeg.exe` 와 `ffprobe.exe` 를 `bin/` 에 넣기만 해도 된다.
 백신이 `bin\ffmpeg.exe` 를 격리하면 그 폴더를 예외로 추가한다. 관리자 권한으로 실행하면 탐색기 드래그&드롭이 막히므로 일반 권한으로 실행한다.
