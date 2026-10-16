@@ -306,7 +306,7 @@ def test_python_ok_matches_running_interpreter():
 | V6 | 스모크: 영상 2개 추가 → 썸네일 보기 → 구간 편집 → GIF 1개 + MP4 1개 변환 → `Open Containing Folder` | 변환 성공, 예상 용량 표시, 로그에 Traceback 없음 |
 | V7 | free-threaded 거부: `py install 3.14t` → `py -V:3.14t bootstrap.py --check` | 메시지 `Python 3.14.xt (free-threaded) is a free-threaded build, which PySide6 does not support. …`, 종료 코드 2 |
 | V8 | 회귀: 3.11 로 `py -3.11 bootstrap.py --check` 와 `run.bat` | 기존과 동일하게 `OK` · 기동 |
-| V9 | 정리: `.venv314` 삭제(`.gitignore` 의 `.venv*` 패턴에 걸리는지 확인, 아니면 추가), 필요 없으면 `py uninstall 3.14t` | `git status` 에 임시 폴더 없음 |
+| V9 | 정리: `.venv314` 삭제, 필요 없으면 `py uninstall 3.14t`. `.gitignore` 는 현재 `.venv/` 만 있으므로 구현 시 `.venv*/` 로 바꾼다 (3.1 과 함께) | `git status` 에 임시 폴더 없음 |
 
 V5~V6 은 PySide6 6.12.0 이 개발 PC 의 6.11.1 과 다른 버전이라는 점에서 **UI 회귀 확인**을 겸한다. 스타일(`dark.qss`) · 체크 표시(주황) ·
 `RangeSlider` 페인트가 달라 보이면 PLAN.md 10장 리스크 항목으로 넘긴다.
