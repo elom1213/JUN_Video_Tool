@@ -844,3 +844,27 @@ EXPORT_SUFFIX = "_draw"
 원 위치 픽셀 변화, 영상 위 커서 숨김, `Ctrl+→` 0 → 30, 버튼 30 → 80, 끝에서 비활성, `Ctrl+←` 150 → 80, `.draw/` 저장 ·
 영상 옆에 파일 없음, 옛 위치 자동 로드 후 다음 저장이 `.draw/` 로 감.
 
+### 15.1 추가 요청 (같은 날, v0.3.1)
+
+| # | 요청 | 구현 |
+|---|------|------|
+| B4 | 파일을 드래그&드롭으로 Convert · Draw 탭에 추가 | `MainWindow.setAcceptDrops(True)` — 리스트 밖(캔버스 · 패널 · 로그 · 툴바)에 놓아도 활성 탭 `add_paths`. 드래그 중 탭 제목 위에 올리면 그 탭으로 전환(spring-loaded). 경로 해석은 `video_list_view.dropped_paths` 공용. `LogPanel.setAcceptDrops(False)` |
+| B5 | 작업표시줄 · 시작 화면 실행 아이콘, 메뉴 문구 2개 | `app/core/shell_integration.py` + `File > Add to Start Menu` / `Pin to Taskbar` (아래) |
+
+**B5 설계와 Windows 제약**
+- 바로가기: `%APPDATA%/Microsoft/Windows/Start Menu/Programs/JUN Video Tool.lnk`. 대상 = 현재 인터프리터의 `pythonw.exe`,
+  인자 = `"<root>/launch.py"`, 아이콘 = `app.ico`, **AppUserModelID = `JUN.VideoTool`** (`version.APP_USER_MODEL_ID`, `launch.py` 도 같은 값).
+  .lnk 에 앱 ID 를 쓰는 건 WScript.Shell 로 안 되므로 PowerShell 5.1 `Add-Type` C# 으로 `IShellLinkW` + `IPropertyStore` 직접 호출,
+  쓰고 나서 다시 읽어 검증한다. pywin32 의존 없음.
+- 고정: Windows 10 1809+ / 11 은 **프로그램이 작업표시줄에 스스로 고정하는 API 가 없다** (셸 동사 `작업 표시줄에 고정` 이 노출되지 않음 —
+  이 PC Win11 26200 에서 확인). 비공식 우회(IPinnedList 등)는 불안정 · 백신 오탐이라 쓰지 않는다. 대신 창에
+  `System.AppUserModel.ID / RelaunchCommand / RelaunchIconResource / RelaunchDisplayNameResource` 를 넣어(`SHGetPropertyStoreForWindow`,
+  ctypes) 사용자가 작업표시줄 버튼을 우클릭 → 고정하면 이 툴이 실행되게 하고, 그 한 단계를 안내한다. 이미 고정됐는지는
+  `User Pinned/TaskBar/*.lnk` 의 앱 ID 로 판정.
+- 시작 화면: `시작 화면에 고정` 동사는 노출되므로 호출한다. 단 Win11 은 고정 뒤에도 `고정 해제` 동사를 보여 주지 않아 결과를 확인할 수
+  없다 — 메시지는 "고정을 요청했다 + 안 보이면 모든 앱에서 우클릭" 으로 쓴다.
+
+검증: `pytest` 87개(`test_shell_integration.py`: pythonw 선택 · 경로 · 실제 .lnk 생성과 앱 ID 재확인), 창 속성 4개 쓰기 → 다시 읽기 일치,
+메뉴 흐름(셸 호출 스텁): 시작 메뉴 → 바로가기 + 시작 고정 요청, 작업표시줄 → 바로가기 + 동사 없음 → 안내, 이미 고정 → 알림.
+드롭: 캔버스 · 브러시 패널(폴더) · 로그 · 탭 제목(Convert 로 전환) · 옵션 패널 · 리스트 모두 활성 탭에 추가.
+

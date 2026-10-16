@@ -8,13 +8,13 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QTimer
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeySequence
-from PySide6.QtWidgets import QMainWindow, QMenu, QMessageBox, QTabWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QTabWidget
 
 from ..config.settings import AppSettings
 from ..config.version import APP_NAME, VERSION
-from ..core import ffmpeg_locator
+from ..core import ffmpeg_locator, shell_integration
 from .convert_tab import ConvertTab
 from .dependency_dialog import DependencyDialog
 from .draw_tab import DrawTab
@@ -116,6 +116,15 @@ class MainWindow(QMainWindow):
         act_add_folder.triggered.connect(lambda: self.current_tab().add_folder())
         m_file.addAction(act_add_files)
         m_file.addAction(act_add_folder)
+        m_file.addSeparator()
+        # 시작 메뉴 · 작업표시줄에 실행 아이콘 (Windows 전용)
+        self.act_start_menu = QAction(app_icon(), "Add to Start Menu", self)
+        self.act_start_menu.triggered.connect(self.add_to_start_menu)
+        self.act_pin_taskbar = QAction(app_icon(), "Pin to Taskbar", self)
+        self.act_pin_taskbar.triggered.connect(self.pin_to_taskbar)
+        for a in (self.act_start_menu, self.act_pin_taskbar):
+            a.setEnabled(shell_integration.is_supported())
+            m_file.addAction(a)
         m_file.addSeparator()
         act_exit = QAction(icon("cancel"), "Exit", self)
         act_exit.triggered.connect(self.close)
@@ -257,6 +266,77 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "About",
                           f"{APP_NAME} v{VERSION}\n\nBulk video converter (GIF / MP4) and frame draw-over tool.\n"
                           "Python + PySide6 + ffmpeg.\n\nAuthor: Ji Hun Park")
+
+    # ================================================================== 시작 메뉴 · 작업표시줄
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not getattr(self, "_relaunch_set", False):
+            self._relaunch_set = True
+            # 작업표시줄 버튼을 우클릭 → 고정했을 때 python.exe 가 아니라 이 툴이 실행되게 한다
+            QTimer.singleShot(0, lambda: shell_integration.set_window_relaunch(int(self.winId())))
+
+    def _make_start_shortcut(self) -> bool:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            lnk = shell_integration.add_to_start_menu()
+        except shell_integration.ShellIntegrationError as exc:
+            QApplication.restoreOverrideCursor()
+            self._log_all(f"Could not create the Start menu shortcut: {exc}", "error")
+            QMessageBox.warning(self, "Start Menu", f"Could not create the Start menu shortcut:\n{exc}")
+            return False
+        QApplication.restoreOverrideCursor()
+        self._log_all(f"Start menu shortcut: {lnk}", "ok")
+        return True
+
+    def add_to_start_menu(self) -> None:
+        if not self._make_start_shortcut():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            pinned = shell_integration.pin_shortcut(shell_integration.start_menu_shortcut(), "start")
+        finally:
+            QApplication.restoreOverrideCursor()
+        text = f"'{APP_NAME}' was added to the Start menu (All apps and Start search)."
+        if pinned in ("pinned", "already"):
+            # Windows 11 은 고정 결과를 알려 주지 않으므로 '요청했다'까지만 말한다
+            text += ("\n\nIt was also pinned to Start. If you do not see it among the pinned apps, "
+                     f"open All apps, right-click '{APP_NAME}' and choose 'Pin to Start'.")
+        else:
+            text += f"\n\nTo pin it to Start, open All apps, right-click '{APP_NAME}' and choose 'Pin to Start'."
+        text += "\n\nIf you move the tool folder, click this menu item again to update the shortcut."
+        QMessageBox.information(self, "Start Menu", text)
+
+    def pin_to_taskbar(self) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            existing = shell_integration.find_pinned_taskbar_shortcut()
+        finally:
+            QApplication.restoreOverrideCursor()
+        if existing is not None:
+            self._log_all(f"Already pinned to the taskbar: {existing.name}")
+            QMessageBox.information(self, "Taskbar", f"'{APP_NAME}' is already pinned to the taskbar.")
+            return
+        # 시작 메뉴 바로가기(앱 ID 포함)를 먼저 둔다: 고정 동사의 대상이자, 수동 고정의 두 번째 경로
+        if not self._make_start_shortcut():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = shell_integration.pin_shortcut(shell_integration.start_menu_shortcut(), "taskbar")
+        finally:
+            QApplication.restoreOverrideCursor()
+        if result in ("pinned", "already"):
+            self._log_all("Pinned to the taskbar.", "ok")
+            QMessageBox.information(self, "Taskbar", f"'{APP_NAME}' was pinned to the taskbar.")
+            return
+        shell_integration.set_window_relaunch(int(self.winId()))
+        self._log_all("Windows does not allow programs to pin themselves; showing the one-click steps.")
+        QMessageBox.information(
+            self, "Pin to Taskbar",
+            "Windows does not allow programs to pin themselves to the taskbar, so the last click is yours:\n\n"
+            f"1. Right-click the {APP_NAME} button on the taskbar (it is there now, while the tool is running).\n"
+            "2. Choose 'Pin to taskbar'.\n\n"
+            f"The pinned button starts {APP_NAME} directly, without a console window.\n\n"
+            f"Another way: open Start > All apps, right-click '{APP_NAME}' and choose More > 'Pin to taskbar'.")
 
     # ================================================================== 종료
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802

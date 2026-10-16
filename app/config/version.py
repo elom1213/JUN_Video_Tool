@@ -8,3 +8,4 @@ LAST_UPDATE = "2026-10-16"
 APP_NAME = "JUN Video Tool"
 ORG_NAME = "JUN"
 SETTINGS_APP = "JUN_Video_Tool"
+APP_USER_MODEL_ID = "JUN.VideoTool"   # 작업표시줄 그룹 · 시작 메뉴 바로가기 · 창 재실행 속성이 같은 값을 쓴다

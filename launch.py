@@ -65,7 +65,9 @@ def run() -> int:
         try:
             import ctypes
 
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JUN.VideoTool")
+            from app.config.version import APP_USER_MODEL_ID
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
         except Exception:
             pass
     app = QApplication(sys.argv)
