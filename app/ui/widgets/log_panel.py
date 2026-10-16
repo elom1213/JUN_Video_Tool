@@ -18,6 +18,8 @@ class LogPanel(QPlainTextEdit):
         self.setReadOnly(True)
         self.setMaximumBlockCount(2000)
         self.setObjectName("LogPanel")
+        # 파일을 로그 위에 떨어뜨려도 텍스트로 끼어들지 않고 창(활성 탭)으로 넘어가게 한다
+        self.setAcceptDrops(False)
 
     @staticmethod
     def _stamp() -> str:

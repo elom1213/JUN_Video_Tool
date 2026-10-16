@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import QMainWindow, QMenu, QMessageBox, QTabWidget
 
 from ..config.settings import AppSettings
@@ -21,6 +21,7 @@ from .draw_tab import DrawTab
 from .icons import app_icon, icon
 from .settings_dialog import SettingsDialog
 from .widgets.loaders import ThumbnailLoader
+from .widgets.video_list_view import dropped_paths, has_local_files
 
 _TAB_KEYS = ("convert", "draw")
 
@@ -44,6 +45,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.convert_tab, icon("convert"), "Convert")
         self.tabs.addTab(self.draw_tab, icon("brush"), "Draw")
         self.setCentralWidget(self.tabs)
+        # 창 어디에 드롭해도 활성 탭에 추가된다 (리스트 뷰는 자기 드롭을 직접 처리)
+        self.setAcceptDrops(True)
 
         self._build_menus()
         self._restore()
@@ -73,6 +76,33 @@ class MainWindow(QMainWindow):
     def _update_title(self) -> None:
         suffix = self.current_tab().title_suffix()
         self.setWindowTitle(f"{APP_NAME} v{VERSION}" + (f" — {suffix}" if suffix else ""))
+
+    # ================================================================== 드래그&드롭
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
+        if has_local_files(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
+        if not has_local_files(event.mimeData()):
+            event.ignore()
+            return
+        # 탭 제목 위로 끌고 가면 그 탭으로 전환한다 → 원하는 탭에 놓을 수 있다
+        bar = self.tabs.tabBar()
+        idx = bar.tabAt(bar.mapFrom(self, event.position().toPoint()))
+        if idx >= 0 and idx != self.tabs.currentIndex():
+            self.tabs.setCurrentIndex(idx)
+        event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
+        if not has_local_files(event.mimeData()):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        paths = dropped_paths(event.mimeData())
+        if paths:
+            self.current_tab().add_paths(paths)
 
     # ================================================================== 메뉴
     def _build_menus(self) -> None:

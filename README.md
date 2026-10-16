@@ -32,7 +32,8 @@ ffmpeg 를 직접 구했다면 `ffmpeg.exe` 와 `ffprobe.exe` 를 `bin/` 에 넣
 
 ## 사용 — Convert 탭
 
-1. `Add Files` / `Add Folder` 또는 리스트에 파일을 드래그&드롭.
+1. `Add Files` / `Add Folder` 또는 파일 · 폴더를 창에 드래그&드롭 (어디에 놓든 현재 탭에 추가된다.
+   끌고 가는 중에 탭 제목 `Convert` / `Draw` 위에 올리면 그 탭으로 바뀐다).
 2. 변환할 항목을 체크 (`Check All` / `Uncheck All` / `Invert`).
 3. `Output format` 에서 GIF 또는 MP4 를 고르고 옵션 조절: 크기(종횡비 `Lock`/`Free`), `Quality`, `FPS`, `Target size`.
    GIF 는 `Loop`, MP4 는 x264 `Preset` 과 `Audio`(AAC / 원본 복사 / 제거) 가 추가된다.
@@ -46,7 +47,7 @@ GIF 도 입력으로 받으므로, 큰 GIF 를 넣어 품질 · 크기 · 목표
 
 ## 사용 — Draw 탭
 
-1. `Add Files` / `Add Folder` / 드래그&드롭으로 영상을 넣고 리스트에서 하나를 고른다 (`List` / `Thumbnails` 보기).
+1. `Add Files` / `Add Folder` / 드래그&드롭(캔버스 위에 놓아도 된다)으로 영상을 넣고 리스트에서 하나를 고른다 (`List` / `Thumbnails` 보기).
 2. 프레임 이동: `Space` 재생/정지, `←` `→` 한 프레임, `Shift+←/→` 10 프레임, `Home` / `End`, 타임라인 · 프레임 칸.
    `Ctrl+←` / `Ctrl+→` (또는 트랜스포트 바의 스냅 버튼) = 그림이 있는 이전 · 다음 프레임으로 이동.
    캔버스 위 **가운데 버튼 드래그** = 좌우 스크럽 (감도 `Middle-drag sensitivity`).

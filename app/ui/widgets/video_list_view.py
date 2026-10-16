@@ -6,12 +6,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal, QPoint
+from PySide6.QtCore import QMimeData, QSize, Qt, Signal, QPoint
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QAction
 from PySide6.QtWidgets import QAbstractItemView, QListView, QMenu
 
 from ...config import constants as C
 from .video_item_delegate import VideoItemDelegate
+
+
+def has_local_files(mime: QMimeData) -> bool:
+    """탐색기에서 끌어온 로컬 파일 · 폴더가 하나라도 있는지."""
+    return mime.hasUrls() and any(u.isLocalFile() for u in mime.urls())
+
+
+def dropped_paths(mime: QMimeData) -> list[Path]:
+    """드롭된 URL → 로컬 경로. 폴더는 바로 아래 파일들로 펼친다 (확장자 거르기는 모델이 한다)."""
+    paths: list[Path] = []
+    for url in mime.urls():
+        if not url.isLocalFile():
+            continue
+        p = Path(url.toLocalFile())
+        if p.is_dir():
+            paths.extend(sorted(c for c in p.iterdir() if c.is_file()))
+        else:
+            paths.append(p)
+    return paths
 
 
 class VideoListView(QListView):
@@ -79,15 +98,7 @@ class VideoListView(QListView):
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         if not event.mimeData().hasUrls():
             return super().dropEvent(event)
-        paths: list[Path] = []
-        for url in event.mimeData().urls():
-            if not url.isLocalFile():
-                continue
-            p = Path(url.toLocalFile())
-            if p.is_dir():
-                paths.extend(sorted(c for c in p.iterdir() if c.is_file()))
-            else:
-                paths.append(p)
+        paths = dropped_paths(event.mimeData())
         event.acceptProposedAction()
         if paths:
             self.files_dropped.emit(paths)
