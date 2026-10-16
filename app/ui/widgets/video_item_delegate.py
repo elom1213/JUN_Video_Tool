@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """리스트 / 썸네일 두 모드를 그리는 델리게이트 (PLAN 6.3)."""
 from __future__ import annotations
 
@@ -100,9 +100,11 @@ class VideoItemDelegate(QStyledItemDelegate):
     def _paint_list(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         r = option.rect
         fm = QFontMetrics(option.font)
-        checked = index.data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+        check_state = index.data(Qt.ItemDataRole.CheckStateRole)
+        checked = check_state == Qt.CheckState.Checked
         enabled = bool(index.flags() & Qt.ItemFlag.ItemIsUserCheckable)
-        status: ItemStatus = index.data(VideoListModel.StatusRole)
+        status: ItemStatus | None = index.data(VideoListModel.StatusRole)
+        show_status = status is not None
         progress: int = index.data(VideoListModel.ProgressRole) or 0
         message: str = index.data(VideoListModel.MessageRole) or ""
         est_text: str = index.data(VideoListModel.EstimateTextRole) or ""
@@ -110,16 +112,19 @@ class VideoItemDelegate(QStyledItemDelegate):
 
         x = r.x() + _PAD
         cy = r.center().y()
-        check_rect = QRect(x, cy - _CHECK // 2, _CHECK, _CHECK)
-        self._draw_check(painter, option, check_rect, checked, enabled)
-        x += _CHECK + _PAD * 2
+        if check_state is not None:   # None = 체크박스 없는 리스트 (Draw 탭)
+            check_rect = QRect(x, cy - _CHECK // 2, _CHECK, _CHECK)
+            self._draw_check(painter, option, check_rect, checked, enabled)
+            x += _CHECK + _PAD * 2
+        else:
+            x += _PAD
 
-        status_w = 140
-        est_w = 90
+        status_w = 140 if show_status else 0
+        est_w = 90 if show_status else 0
         right = r.right() - _PAD
         status_rect = QRect(right - status_w, r.y(), status_w, r.height())
         est_rect = QRect(status_rect.x() - _PAD - est_w, r.y(), est_w, r.height())
-        avail = est_rect.x() - _PAD - x
+        avail = (est_rect.x() - _PAD - x) if show_status else (right - x)
         name_w = int(avail * 0.40)
         name_rect = QRect(x, r.y(), name_w, r.height())
         info_rect = QRect(x + name_w + _PAD, r.y(), max(0, avail - name_w - _PAD), r.height())
@@ -132,6 +137,8 @@ class VideoItemDelegate(QStyledItemDelegate):
         info = fm.elidedText(index.data(VideoListModel.InfoTextRole) or "", Qt.TextElideMode.ElideRight, info_rect.width())
         painter.drawText(info_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, info)
 
+        if not show_status:
+            return
         if est_text:
             painter.setPen(QColor(C.Colors.WARN if over_target else C.Colors.TEXT_DIM))
             painter.drawText(est_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, est_text)
@@ -157,9 +164,10 @@ class VideoItemDelegate(QStyledItemDelegate):
     def _paint_thumb(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         r = option.rect
         fm = QFontMetrics(option.font)
-        checked = index.data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+        check_state = index.data(Qt.ItemDataRole.CheckStateRole)
+        checked = check_state == Qt.CheckState.Checked
         enabled = bool(index.flags() & Qt.ItemFlag.ItemIsUserCheckable)
-        status: ItemStatus = index.data(VideoListModel.StatusRole)
+        status: ItemStatus | None = index.data(VideoListModel.StatusRole)
         progress: int = index.data(VideoListModel.ProgressRole) or 0
         est_text: str = index.data(VideoListModel.EstimateTextRole) or ""
         over_target: bool = bool(index.data(VideoListModel.EstimateOverTargetRole))
@@ -178,12 +186,13 @@ class VideoItemDelegate(QStyledItemDelegate):
             painter.setPen(QColor(C.Colors.TEXT_DIM))
             painter.drawText(img_rect, Qt.AlignmentFlag.AlignCenter, "…")
 
-        # 체크박스 (좌상단)
-        check_rect = QRect(img_rect.x() + 4, img_rect.y() + 4, _CHECK, _CHECK)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 140))
-        painter.drawRoundedRect(check_rect.adjusted(-2, -2, 2, 2), 3, 3)
-        self._draw_check(painter, option, check_rect, checked, enabled)
+        # 체크박스 (좌상단). 체크 없는 리스트면 생략
+        if check_state is not None:
+            check_rect = QRect(img_rect.x() + 4, img_rect.y() + 4, _CHECK, _CHECK)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 140))
+            painter.drawRoundedRect(check_rect.adjusted(-2, -2, 2, 2), 3, 3)
+            self._draw_check(painter, option, check_rect, checked, enabled)
 
         # 상태 점 (우상단)
         if status in (ItemStatus.DONE, ItemStatus.FAILED, ItemStatus.CANCELED, ItemStatus.SKIPPED):

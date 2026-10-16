@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """영상 목록 뷰 (PLAN 6.4): 드래그&드롭, 보기 모드 전환, 컨텍스트 메뉴."""
 from __future__ import annotations
 
@@ -19,9 +19,12 @@ class VideoListView(QListView):
     open_folder_requested = Signal(int)       # row
     remove_requested = Signal(list)           # rows
     reset_range_requested = Signal(list)      # rows
+    load_drawing_requested = Signal(int)      # row (Draw 탭)
+    show_drawing_file_requested = Signal(int)  # row (Draw 탭)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, context_actions: str = "convert") -> None:
         super().__init__(parent)
+        self._context = context_actions
         self._delegate = VideoItemDelegate(self)
         self.setItemDelegate(self._delegate)
         self.setAcceptDrops(True)
@@ -113,11 +116,21 @@ class VideoListView(QListView):
         act_remove = QAction("Remove Selected", menu)
         act_remove.setEnabled(bool(rows))
         act_remove.triggered.connect(lambda: self.remove_requested.emit(rows))
-        act_reset = QAction("Reset Frame Range", menu)
-        act_reset.setEnabled(bool(rows))
-        act_reset.triggered.connect(lambda: self.reset_range_requested.emit(rows))
         menu.addAction(act_open)
         menu.addSeparator()
-        menu.addAction(act_reset)
+        if self._context == "draw":
+            act_load = QAction("Load Drawing…", menu)
+            act_load.setEnabled(idx.isValid())
+            act_load.triggered.connect(lambda: self.load_drawing_requested.emit(idx.row()))
+            act_show = QAction("Show Drawing File", menu)
+            act_show.setEnabled(idx.isValid())
+            act_show.triggered.connect(lambda: self.show_drawing_file_requested.emit(idx.row()))
+            menu.addAction(act_load)
+            menu.addAction(act_show)
+        else:
+            act_reset = QAction("Reset Frame Range", menu)
+            act_reset.setEnabled(bool(rows))
+            act_reset.triggered.connect(lambda: self.reset_range_requested.emit(rows))
+            menu.addAction(act_reset)
         menu.addAction(act_remove)
         menu.exec(self.viewport().mapToGlobal(pos))

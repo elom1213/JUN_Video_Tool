@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-16
 """영상 목록 모델 (PLAN 6.2)."""
 from __future__ import annotations
 
@@ -40,8 +40,11 @@ class VideoListModel(QAbstractListModel):
     rows_added = Signal(list)       # list[int]
     check_changed = Signal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, checkable: bool = True, show_status: bool = True) -> None:
         super().__init__(parent)
+        # Draw 탭 리스트는 체크박스 · 상태 · 추정 열이 없다 (PLAN_DRAW_TAB 3.4)
+        self._checkable = checkable
+        self._show_status = show_status
         self._items: list[VideoItem] = []
         self._pixmaps: dict[str, QPixmap] = {}
         self._keys: set[str] = set()
@@ -56,7 +59,7 @@ class VideoListModel(QAbstractListModel):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         f = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        if not self._locked:
+        if self._checkable and not self._locked:
             f |= Qt.ItemFlag.ItemIsUserCheckable
         return f
 
@@ -67,11 +70,16 @@ class VideoListModel(QAbstractListModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return it.path.name
         if role == Qt.ItemDataRole.CheckStateRole:
+            if not self._checkable:
+                return None
             return Qt.CheckState.Checked if it.checked else Qt.CheckState.Unchecked
         if role == Qt.ItemDataRole.DecorationRole:
             return self._pixmaps.get(normcase_path(it.path))
         if role == Qt.ItemDataRole.ToolTipRole:
-            lines = [str(it.path), info_text(it.info, it.probe_error), f"Status: {it.status.value}"]
+            lines = [str(it.path), info_text(it.info, it.probe_error)]
+            if not self._show_status:
+                return "\n".join(lines)
+            lines.append(f"Status: {it.status.value}")
             if it.message:
                 lines.append(it.message)
             est = self.estimate_text(it)
@@ -86,6 +94,9 @@ class VideoListModel(QAbstractListModel):
             return it
         if role == self.InfoTextRole:
             return info_text(it.info, it.probe_error)
+        if not self._show_status and role in (self.StatusRole, self.ProgressRole, self.EstimateTextRole,
+                                              self.EstimateOverTargetRole):
+            return None
         if role == self.StatusRole:
             return it.status
         if role == self.ProgressRole:
@@ -101,7 +112,8 @@ class VideoListModel(QAbstractListModel):
 
     def setData(self, index: QModelIndex | QPersistentModelIndex, value: Any,  # noqa: N802
                 role: int = Qt.ItemDataRole.EditRole) -> bool:
-        if not index.isValid() or role != Qt.ItemDataRole.CheckStateRole or self._locked:
+        if (not index.isValid() or role != Qt.ItemDataRole.CheckStateRole or self._locked
+                or not self._checkable):
             return False
         it = self._items[index.row()]
         new = value in (Qt.CheckState.Checked, Qt.CheckState.Checked.value, True)
@@ -196,6 +208,8 @@ class VideoListModel(QAbstractListModel):
         self.check_changed.emit()
 
     def checked_rows(self) -> list[int]:
+        if not self._checkable:
+            return []
         return [i for i, it in enumerate(self._items) if it.checked]
 
     def item(self, row: int) -> VideoItem:
