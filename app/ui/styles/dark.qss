@@ -107,6 +107,15 @@ QRadioButton::indicator:checked:disabled {
                                       stop: 0 #aaaaaa, stop: 0.28 #aaaaaa, stop: 0.36 #6d4a3d, stop: 1 #6d4a3d);
 }
 
+/* 탭 (PLAN_DRAW_TAB 5.9) */
+QTabWidget::pane { border: 1px solid #444444; top: -1px; }
+QTabBar::tab { background: #2b2b2b; color: #9a9a9a; padding: 6px 18px; border: 1px solid #444444; border-bottom: none; }
+QTabBar::tab:selected { background: #353535; color: #e6e6e6; border-top: 2px solid #e8734a; }
+QTabBar::tab:hover:!selected { color: #e6e6e6; }
+#VideoCanvas { background: #1a1a1a; }
+QToolButton#Swatch { border: 1px solid #444444; border-radius: 3px; min-width: 22px; min-height: 22px; padding: 0; }
+QToolButton#Swatch:checked { border: 2px solid #ffffff; }
+
 QSplitter::handle { background-color: #3a3a3a; }
 QSplitter::handle:horizontal { width: 4px; }
 QSplitter::handle:vertical { height: 4px; }
