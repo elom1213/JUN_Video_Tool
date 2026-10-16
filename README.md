@@ -48,11 +48,13 @@ GIF 도 입력으로 받으므로, 큰 GIF 를 넣어 품질 · 크기 · 목표
 
 1. `Add Files` / `Add Folder` / 드래그&드롭으로 영상을 넣고 리스트에서 하나를 고른다 (`List` / `Thumbnails` 보기).
 2. 프레임 이동: `Space` 재생/정지, `←` `→` 한 프레임, `Shift+←/→` 10 프레임, `Home` / `End`, 타임라인 · 프레임 칸.
+   `Ctrl+←` / `Ctrl+→` (또는 트랜스포트 바의 스냅 버튼) = 그림이 있는 이전 · 다음 프레임으로 이동.
    캔버스 위 **가운데 버튼 드래그** = 좌우 스크럽 (감도 `Middle-drag sensitivity`).
 3. **좌버튼 드래그** = 현재 툴로 그리기(`D`) 또는 지우기(`E`, 선의 닿은 부분만 지움). 재생 중에 누르면 먼저 멈춘다.
-   색 · 두께 · 지우개 크기는 오른쪽 `Brush` 패널. `Ctrl+Z` / `Ctrl+Y`, `Clear Frame`(`Shift+Del`), `Draw > Clear All Drawings`.
+   색 · 두께 · 지우개 크기는 오른쪽 `Brush` 패널이며, 영상 위 마우스 위치에 그 크기의 원이 보인다. `Ctrl+Z` / `Ctrl+Y`, `Clear Frame`(`Shift+Del`), `Draw > Clear All Drawings`.
 4. `Ghosting`: 앞(`Before`) · 뒤(`After`) 프레임의 선을 반투명으로 겹쳐 본다 (`G` 로 켜고 끄기). 재생 중에도 보인다.
-5. `Save`(`Ctrl+S`) 는 영상 옆에 `<영상이름>.draw.json` 을 쓴다. 다음에 그 영상을 고르면 자동으로 불러온다.
+5. `Save`(`Ctrl+S`) 는 영상 폴더 안 `.draw` 폴더에 `<영상이름>.draw.json` 을 쓴다. 다음에 그 영상을 고르면 자동으로 불러온다.
+   (0.3.0 처럼 영상 바로 옆에 있는 파일도 읽는다.)
    `Save As…` / `Load…`(`Ctrl+L`) 로 다른 파일도 쓸 수 있다. `Auto-save on switch` 를 켜면 영상 전환 · 종료 시 묻지 않고 저장한다.
 6. `Export…`(`Ctrl+E`): 그림을 입힌 MP4 / GIF 를 만든다. 옵션은 Convert 탭과 같고 설정은 따로 기억한다.
    `Include ghosting` 을 켜면 현재 고스트 설정까지 굽는다.

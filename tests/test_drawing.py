@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.core.drawing import (DrawingDocument, DrawingFormatError, Stroke, densify, erase_strokes, ghost_alpha,
-                              ghost_frames, sidecar_path)
+                              ghost_frames, legacy_sidecar_path, sidecar_path)
 
 
 def _doc():
@@ -106,7 +106,24 @@ def test_rescaled():
 
 
 def test_sidecar_path():
-    assert sidecar_path(Path("C:/a/clip.mp4")) == Path("C:/a/clip.mp4.draw.json")
+    assert sidecar_path(Path("C:/a/clip.mp4")) == Path("C:/a/.draw/clip.mp4.draw.json")
+    assert legacy_sidecar_path(Path("C:/a/clip.mp4")) == Path("C:/a/clip.mp4.draw.json")
+
+
+def test_prev_next_drawn_frame():
+    doc = DrawingDocument("v.mp4", "C:/v.mp4", 100, 100, 30.0, 100)
+    for f in (5, 20, 40):
+        doc.add_stroke(f, Stroke("#ffffff", 2.0, [(1.0, 1.0)]))
+    doc.add_stroke(60, Stroke("#ffffff", 2.0, [(1.0, 1.0)]))
+    doc.clear_frame(60)                          # 빈 프레임은 건너뛴다
+    assert doc.next_drawn_frame(0) == 5
+    assert doc.next_drawn_frame(5) == 20
+    assert doc.next_drawn_frame(39) == 40
+    assert doc.next_drawn_frame(40) is None
+    assert doc.prev_drawn_frame(40) == 20
+    assert doc.prev_drawn_frame(21) == 20
+    assert doc.prev_drawn_frame(5) is None
+    assert doc.prev_drawn_frame(99) == 40
 
 
 def test_frames_with_strokes_sorted():

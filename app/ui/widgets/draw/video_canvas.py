@@ -116,6 +116,7 @@ class VideoCanvas(QWidget):
 
     def set_brush(self, color: str, width: float) -> None:
         self._color, self._width = color, float(width)
+        self.update()
 
     def set_eraser_size(self, size: float) -> None:
         self._eraser = float(size)
@@ -190,14 +191,9 @@ class VideoCanvas(QWidget):
                     path.lineTo(pt)
                 p.drawPath(path)
 
-        # 지우개 외곽선
-        if self._tool == "erase" and self._mouse is not None and vr.contains(self._mouse):
-            r = self._eraser / 2.0 * scale
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor(0, 0, 0, 160), 3))
-            p.drawEllipse(self._mouse, r, r)
-            p.setPen(QPen(QColor("#ffffff"), 1))
-            p.drawEllipse(self._mouse, r, r)
+        # 툴 크기 원 (브러시 두께 / 지우개 지름). 영상 위에서는 시스템 커서 대신 이 원이 커서다
+        if self._show_tool_outline(vr):
+            self._paint_tool_outline(p, scale)
 
         if self._loading:
             p.setPen(QColor(C.Colors.TEXT_DIM))
@@ -251,8 +247,8 @@ class VideoCanvas(QWidget):
             seg = [self._erase_last, cur] if self._erase_last is not None else [cur]
             self._erase_last = cur
             self._erase_at(seg)
-        if self._tool == "erase":
-            self.update()
+        self._update_cursor()
+        self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.MiddleButton and self._scrubbing:
@@ -279,6 +275,34 @@ class VideoCanvas(QWidget):
         self._mouse = None
         self.update()
 
+    def tool_outline_radius(self) -> float:
+        """현재 툴 크기 원의 화면 반지름 (px). 브러시 = 두께/2, 지우개 = 지름/2 (소스 px × 화면 배율)."""
+        size = self._eraser if self._tool == "erase" else self._width
+        return size / 2.0 * self._scale()
+
+    def _show_tool_outline(self, vr: QRectF) -> bool:
+        return (self._mouse is not None and not self._scrubbing and self._has_input()
+                and vr.contains(self._mouse))
+
+    def _paint_tool_outline(self, p: QPainter, scale: float) -> None:
+        assert self._mouse is not None
+        r = max(1.5, self.tool_outline_radius())
+        p.save()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        # 어두운 테두리 + 밝은 선 두 겹이라 어떤 배경에서도 보인다
+        p.setPen(QPen(QColor(0, 0, 0, 170), 3))
+        p.drawEllipse(self._mouse, r, r)
+        light = QColor("#ffffff") if self._tool == "erase" else QColor(self._color).lighter(115)
+        p.setPen(QPen(light, 1))
+        p.drawEllipse(self._mouse, r, r)
+        # 중심점 (작은 브러시에서도 위치가 보이게)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 170))
+        p.drawEllipse(self._mouse, 2.0, 2.0)
+        p.setBrush(QColor("#ffffff"))
+        p.drawEllipse(self._mouse, 1.0, 1.0)
+        p.restore()
+
     def enterEvent(self, _event) -> None:  # noqa: N802
         # 마우스를 올리면 키(←/→/Space)가 캔버스로 가게 한다 (5.2)
         self.setFocus(Qt.FocusReason.MouseFocusReason)
@@ -303,8 +327,13 @@ class VideoCanvas(QWidget):
             self._update_cursor()
 
     def _update_cursor(self) -> None:
-        # draw · erase 모두 십자 커서. 지우개는 크기 원을 따로 그린다
-        self.setCursor(Qt.CursorShape.CrossCursor)
+        if self._scrubbing:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif self._show_tool_outline(self.video_rect()):
+            # 영상 위: 툴 크기 원이 커서를 대신한다
+            self.setCursor(Qt.CursorShape.BlankCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def screen_point(self, vx: float, vy: float) -> QPointF:
         """테스트 · 디버그용: 소스 좌표 → 화면 좌표."""

@@ -578,7 +578,7 @@ QToolButton#Swatch:checked { border: 2px solid #ffffff; }
 | 스크럽 | `delta = int((x − x0) / px_per_frame)` → 8 px/frame, 이동 −23 px → −2 프레임 (0 방향 절삭) |
 | 좌표 변환 | video_rect (100, 50, 640, 360), 소스 1920×1080: 화면 (420, 230) → 소스 (960.0, 540.0). 역변환은 동일 점 복원 |
 | 리스케일 | 1920×1080 문서를 1280×720 영상에 `rescaled` → 점 ×(2/3), 두께 ×(2/3) (두께는 높이 비율) |
-| 사이드카 | `sidecar_path("C:/a/clip.mp4") = "C:/a/clip.mp4.draw.json"` |
+| 사이드카 | `sidecar_path("C:/a/clip.mp4") = "C:/a/.draw/clip.mp4.draw.json"` (15장. 옛 위치 `legacy_sidecar_path` = `"C:/a/clip.mp4.draw.json"`) |
 | Undo | add A, add B, undo → [A]; redo → [A,B]; add C 뒤 redo → 무효(False); clear_frame → [] , undo → [A,B,C] |
 
 ---
@@ -829,4 +829,18 @@ EXPORT_SUFFIX = "_draw"
 - `-fps_mode` 폴백(`-vsync 0`)과 hwaccel 폴백은 코드로 들어갔지만 이 PC 의 ffmpeg 9.0.2 에서는 발동하지 않아 실측하지 않았다.
 - 실영상 2종(H.264 mp4 · ProRes mov) 시크 검증, 1080p 메모리 실측(9.2), **Windows 10 실기 체크(9.3)** 는 미수행.
 - 장시간 재생의 오디오 드리프트 보정은 범위 밖(13.1) — 비디오가 디코드를 기다릴 때마다 오디오를 suspend/resume 하므로 짧은 멈칫은 맞는다.
+
+---
+
+## 15. 2026-10-16 추가 요청 (v0.3.1)
+
+| # | 요청 | 구현 |
+|---|------|------|
+| B1 | `.draw.json` 을 영상 옆이 아니라 그 경로의 `.draw` 폴더에 저장 | `sidecar_path(video) = video.parent / ".draw" / (video.name + ".draw.json")` (`C.DRAW_DIR_NAME`). 저장 시 `mkdir(parents=True, exist_ok=True)`. 새 위치에 없으면 `legacy_sidecar_path`(영상 옆)를 읽고 로그 `This drawing is in the old location; the next save writes .draw/<name>.draw.json.` — 다음 저장부터 새 위치. 옛 파일은 지우지 않는다. 로그 경로는 영상 폴더 기준 상대 경로 |
+| B2 | 그린 프레임으로 스냅 이동하는 화살표 버튼 | `DrawingDocument.prev_drawn_frame(f)` / `next_drawn_frame(f)` (bisect, 빈 프레임 제외). `TransportBar` 의 `|◀◀▶▶|` 뒤에 `prev_drawn` / `next_drawn` 버튼 (아이콘: 셰브런 + 점 = 타임라인 마커), Draw 메뉴 `Previous Drawn Frame`(`Ctrl+Left`) · `Next Drawn Frame`(`Ctrl+Right`). 이동은 `controller.step` 이라 재생 중이면 정지. 갈 곳이 없으면 버튼 · 액션 비활성 |
+| B3 | 브러시 · 지우개 크기 원을 마우스 위치에 | `VideoCanvas` 가 두 툴 모두 원을 그린다: 반지름 = (브러시 두께 또는 지우개 지름) / 2 × 화면 배율, 최소 1.5 px. 어두운 3 px + 밝은 1 px 두 겹(브러시는 브러시 색을 밝게, 지우개는 흰색) + 중심점. 영상 영역 위에서는 `BlankCursor` 로 시스템 커서를 숨기고, 밖에서는 화살표, 스크럽 중에는 `SizeHorCursor`. `tool_outline_radius()` 는 검증용 |
+
+검증: `pytest` 83개 (스냅 함수 · 새 사이드카 경로), `dev/check_draw.py` ALL OK — 원 반지름(브러시 16 → 8 × 배율, 지우개 64 → 32 × 배율),
+원 위치 픽셀 변화, 영상 위 커서 숨김, `Ctrl+→` 0 → 30, 버튼 30 → 80, 끝에서 비활성, `Ctrl+←` 150 → 80, `.draw/` 저장 ·
+영상 옆에 파일 없음, 옛 위치 자동 로드 후 다음 저장이 `.draw/` 로 감.
 

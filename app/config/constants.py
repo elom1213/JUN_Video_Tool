@@ -143,6 +143,7 @@ GHOST_AFTER_DEFAULT = 2
 GHOST_SPAN_MAX = 30
 GHOST_OPACITY_DEFAULT = 0.35      # 0.05 ~ 1.0
 DRAW_FILE_SUFFIX = ".draw.json"
+DRAW_DIR_NAME = ".draw"             # 드로잉 파일을 모아 두는 하위 폴더 (영상 폴더 안)
 DRAW_FORMAT_NAME = "jun-video-tool-drawing"
 DRAW_FORMAT_VERSION = 1
 

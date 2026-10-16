@@ -4,6 +4,7 @@
 """Draw 탭 데이터 모델 · 고스트 계산 · 지우개 · JSON (PLAN_DRAW_TAB 4.2, 6, 7, 13.3). PySide6 비의존."""
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import re
@@ -135,6 +136,18 @@ class DrawingDocument:
 
     def frames_with_strokes(self) -> list[int]:
         return sorted(f for f, s in self.frames.items() if s)
+
+    def prev_drawn_frame(self, frame: int) -> int | None:
+        """frame 보다 앞에서 그림이 있는 가장 가까운 프레임. 없으면 None."""
+        frames = self.frames_with_strokes()
+        i = bisect.bisect_left(frames, frame)
+        return frames[i - 1] if i > 0 else None
+
+    def next_drawn_frame(self, frame: int) -> int | None:
+        """frame 보다 뒤에서 그림이 있는 가장 가까운 프레임. 없으면 None."""
+        frames = self.frames_with_strokes()
+        i = bisect.bisect_right(frames, frame)
+        return frames[i] if i < len(frames) else None
 
     def stroke_count(self) -> int:
         return sum(len(s) for s in self.frames.values())
@@ -311,6 +324,16 @@ def erase_strokes(strokes: list[Stroke], path: list[tuple[float, float]],
 
 
 def sidecar_path(video: Path) -> Path:
-    """clip.mp4 → clip.mp4.draw.json (확장자 교체가 아니라 덧붙임)."""
+    """C:/a/clip.mp4 → C:/a/.draw/clip.mp4.draw.json.
+
+    영상 폴더 안의 `.draw` 하위 폴더에 모은다 (영상 옆을 어지럽히지 않게). 확장자 교체가 아니라 덧붙임이라
+    clip.mp4 와 clip.mov 가 같은 폴더에 있어도 충돌하지 않는다. 폴더는 저장할 때 만든다.
+    """
+    video = Path(video)
+    return video.parent / C.DRAW_DIR_NAME / (video.name + C.DRAW_FILE_SUFFIX)
+
+
+def legacy_sidecar_path(video: Path) -> Path:
+    """v0.3.0 초기 위치 (영상 바로 옆). 새 위치에 파일이 없을 때 읽기 전용 폴백."""
     video = Path(video)
     return video.with_name(video.name + C.DRAW_FILE_SUFFIX)

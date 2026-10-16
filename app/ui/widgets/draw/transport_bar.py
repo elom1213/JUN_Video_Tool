@@ -61,6 +61,8 @@ def _tool_button(name: str, tip: str) -> QToolButton:
 class TransportBar(QWidget):
     volume_changed = Signal(int)       # 0 ~ 100
     muted_changed = Signal(bool)
+    prev_drawn_clicked = Signal()      # 그림이 있는 이전 프레임으로
+    next_drawn_clicked = Signal()      # 그림이 있는 다음 프레임으로
 
     def __init__(self, controller: PlaybackController, parent=None) -> None:
         super().__init__(parent)
@@ -73,6 +75,8 @@ class TransportBar(QWidget):
         self.btn_play = _tool_button("play", "Play / Pause (Space)")
         self.btn_next = _tool_button("next_frame", "Next Frame (Right)")
         self.btn_last = _tool_button("last_frame", "Last Frame (End)")
+        self.btn_prev_drawn = _tool_button("prev_drawn", "Previous Drawn Frame (Ctrl+Left)")
+        self.btn_next_drawn = _tool_button("next_drawn", "Next Drawn Frame (Ctrl+Right)")
         self.slider = _MarkerSlider()
         self.slider.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.spin = QSpinBox()
@@ -95,6 +99,9 @@ class TransportBar(QWidget):
         lay.setSpacing(4)
         for b in (self.btn_first, self.btn_prev, self.btn_play, self.btn_next, self.btn_last):
             lay.addWidget(b)
+        lay.addSpacing(6)
+        lay.addWidget(self.btn_prev_drawn)
+        lay.addWidget(self.btn_next_drawn)
         lay.addWidget(self.slider, 1)
         lay.addWidget(QLabel("Frame"))
         lay.addWidget(self.spin)
@@ -111,6 +118,8 @@ class TransportBar(QWidget):
         self.btn_play.clicked.connect(c.toggle)
         self.btn_next.clicked.connect(lambda: c.step(1))
         self.btn_last.clicked.connect(c.last)
+        self.btn_prev_drawn.clicked.connect(self.prev_drawn_clicked)
+        self.btn_next_drawn.clicked.connect(self.next_drawn_clicked)
         self.slider.sliderPressed.connect(self._slider_pressed)
         self.slider.sliderMoved.connect(self._slider_moved)
         self.slider.sliderReleased.connect(self._slider_released)
@@ -142,6 +151,10 @@ class TransportBar(QWidget):
         self.spin.setValue(frame)
         self.tc_label.setText(frame_timecode(frame, self.controller.fps()))
         self._updating = False
+
+    def set_snap_enabled(self, prev: bool, nxt: bool) -> None:
+        self.btn_prev_drawn.setEnabled(prev)
+        self.btn_next_drawn.setEnabled(nxt)
 
     def set_audio_state(self, volume: int, muted: bool) -> None:
         self.volume.setValue(volume)

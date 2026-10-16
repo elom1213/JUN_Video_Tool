@@ -33,7 +33,7 @@ from PySide6.QtCore import QPoint, QSettings, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.core.drawing import sidecar_path  # noqa: E402
+from app.core.drawing import legacy_sidecar_path, sidecar_path  # noqa: E402
 from app.core.ffmpeg_locator import find_ffmpeg  # noqa: E402
 from app.core.frame_decoder import FrameStream, make_decode_spec  # noqa: E402
 from app.core.media_probe import probe  # noqa: E402
@@ -248,6 +248,43 @@ def main() -> int:
         check(len(doc.strokes_at(30)) == 1 and len(doc.strokes_at(30)[0].points) == len(s30[0].points), "Ctrl+Z restores")
         QTest.keyClick(cv, Qt.Key.Key_D)
         check(dt.act_tool_draw.isChecked(), "D -> Draw tool")
+        # 툴 크기 원: 브러시 16 px, 지우개 64 px (소스) × 화면 배율
+        sc = cv.video_rect().height() / 720
+        mid = cv.screen_point(640, 360).toPoint()
+        QTest.mouseMove(cv, mid)
+        pump(app, 0.05)
+        check(abs(cv.tool_outline_radius() - 8 * sc) < 1e-6, f"brush outline radius {cv.tool_outline_radius():.2f} px")
+        check(cv.cursor().shape() == Qt.CursorShape.BlankCursor, "system cursor hidden over video (outline is the cursor)")
+        ring_pt = QPoint(mid.x() + round(8 * sc), mid.y())
+        ring = cv.grab().toImage().pixelColor(ring_pt)
+        cv.leaveEvent(None)
+        bare = cv.grab().toImage().pixelColor(ring_pt)
+        QTest.mouseMove(cv, mid)
+        check(ring.name() != bare.name(), f"outline ring drawn at radius ({bare.name()} -> {ring.name()})")
+        QTest.keyClick(cv, Qt.Key.Key_E)
+        QTest.mouseMove(cv, mid)
+        check(abs(cv.tool_outline_radius() - 32 * sc) < 1e-6, f"eraser outline radius {cv.tool_outline_radius():.2f} px")
+        QTest.keyClick(cv, Qt.Key.Key_D)
+        # 그린 프레임으로 스냅 (Ctrl+←/→, 트랜스포트 버튼)
+        doc.add_stroke(80, doc.strokes_at(30)[0].copy())
+        dt._doc_changed()
+        c.seek(0)
+        pump(app, 3, lambda: dt.canvas._image_frame == 0)
+        check(dt.transport.btn_next_drawn.isEnabled() and not dt.transport.btn_prev_drawn.isEnabled(),
+              "snap buttons: next on, prev off at frame 0")
+        QTest.keyClick(cv, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+        check(c.frame() == 30, f"Ctrl+Right -> drawn frame {c.frame()}")
+        dt.transport.btn_next_drawn.click()
+        check(c.frame() == 80, f"next-drawn button -> frame {c.frame()}")
+        check(not dt.act_next_drawn.isEnabled(), "no drawn frame after 80 -> next disabled")
+        c.seek(150)
+        pump(app, 0.1)
+        QTest.keyClick(cv, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+        check(c.frame() == 80, f"Ctrl+Left from 150 -> frame {c.frame()}")
+        dt.transport.btn_prev_drawn.click()
+        check(c.frame() == 30, f"prev-drawn button -> frame {c.frame()}")
+        doc.undo(80)
+        dt._doc_changed()
         # 고스트 범위 안 프레임에서 앞 프레임 선이 보이는지 (렌더 결과로 확인)
         dt.ghost_panel.set_state(True, 2, 2, 1.0)
         c.seek(31)
@@ -264,7 +301,10 @@ def main() -> int:
         print("[7] save -> reopen -> auto-load")
         check(dt.save(), "Ctrl+S save")
         side = sidecar_path(src)
-        check(side.is_file(), f"sidecar {side.name} written")
+        check(side.is_file() and side.parent == src.parent / ".draw", f"sidecar written to {side.parent.name}/{side.name}")
+        check(not legacy_sidecar_path(src).exists(), "nothing written next to the video")
+        # 옛 위치(영상 옆) 파일도 읽히는지: 옮겨 두고 새 창에서 연다
+        side.replace(legacy_sidecar_path(src))
         check(not doc.dirty and not w.windowTitle().endswith("*"), "dirty cleared")
         w.close()
         pump(app, 0.5)
@@ -278,7 +318,12 @@ def main() -> int:
         check(pump(app, 10, lambda: d2.doc is not None), "video selected in new window")
         check(d2.doc is not None and len(d2.doc.strokes_at(30)) == 1, "drawing auto-loaded from sidecar")
         log = d2.log.toPlainText()
-        check("Loaded drawing: testsrc.mp4.draw.json (1 frame, 1 stroke)" in log, "load log line")
+        check("Loaded drawing: testsrc.mp4.draw.json (1 frame, 1 stroke)" in log, "legacy location loaded + log line")
+        check("old location" in log, "old location notice")
+        d2.doc.dirty = True
+        check(d2.save() and side.is_file(), "next save goes to .draw folder")
+        log = d2.log.toPlainText()
+        check("Saved drawing: .draw/testsrc.mp4.draw.json" in log, "save log shows .draw path")
 
         print("[8] export with drawing")
         from app.core.converters import GifConverter, GifOptions, Mp4Converter, Mp4Options

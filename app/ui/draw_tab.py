@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QGroup
 
 from ..config import constants as C
 from ..config.settings import AppSettings
-from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, sidecar_path
+from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
 from ..core.utils import human_size
@@ -112,6 +112,10 @@ class DrawTab(QWidget):
         self.act_fwd10 = self._act(None, "Forward 10 Frames", "Shift+Right", lambda: c.step(10))
         self.act_first = self._act("first_frame", "First Frame", "Home", c.first)
         self.act_last = self._act("last_frame", "Last Frame", "End", c.last)
+        self.act_prev_drawn = self._act("prev_drawn", "Previous Drawn Frame", "Ctrl+Left",
+                                        lambda: self.snap_drawn(-1))
+        self.act_next_drawn = self._act("next_drawn", "Next Drawn Frame", "Ctrl+Right",
+                                        lambda: self.snap_drawn(1))
 
         self.act_tool_draw = self._act("brush", "Draw Tool", "D", lambda: self._set_tool("draw"), icon_text="Draw")
         self.act_tool_erase = self._act("eraser", "Erase Tool", "E", lambda: self._set_tool("erase"),
@@ -285,11 +289,13 @@ class DrawTab(QWidget):
         self.clear_frame_btn.clicked.connect(self.clear_frame)
         self.transport.volume_changed.connect(self.audio.set_volume)
         self.transport.muted_changed.connect(self.audio.set_muted)
+        self.transport.prev_drawn_clicked.connect(lambda: self.snap_drawn(-1))
+        self.transport.next_drawn_clicked.connect(lambda: self.snap_drawn(1))
 
     # ================================================================== 탭 공통 인터페이스 (3.3)
     def menu_actions(self) -> list[QAction | None]:
         return [self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
-                self.act_last, None,
+                self.act_last, self.act_prev_drawn, self.act_next_drawn, None,
                 self.act_tool_draw, self.act_tool_erase, self.act_ghost, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
@@ -403,6 +409,11 @@ class DrawTab(QWidget):
         self.act_redo.setEnabled(a and has_video and doc is not None and doc.can_redo(frame))
         self.act_clear_frame.setEnabled(a and has_video and doc is not None and bool(doc.strokes_at(frame)))
         self.act_clear_all.setEnabled(a and has_video and doc is not None and not doc.is_empty())
+        can_prev = has_video and doc is not None and doc.prev_drawn_frame(frame) is not None
+        can_next = has_video and doc is not None and doc.next_drawn_frame(frame) is not None
+        self.act_prev_drawn.setEnabled(a and can_prev)
+        self.act_next_drawn.setEnabled(a and can_next)
+        self.transport.set_snap_enabled(can_prev, can_next)
         self.undo_btn.setEnabled(self.act_undo.isEnabled())
         self.redo_btn.setEnabled(self.act_redo.isEnabled())
         self.clear_frame_btn.setEnabled(self.act_clear_frame.isEnabled())
@@ -556,16 +567,32 @@ class DrawTab(QWidget):
 
     def _read_sidecar(self, item: VideoItem) -> DrawingDocument:
         path = sidecar_path(item.path)
+        legacy = False
         if not path.is_file():
-            return self._new_document(item)
+            # v0.3.0 초기 위치(영상 바로 옆)에 있으면 읽어 오고, 다음 저장은 .draw 폴더로 간다
+            path = legacy_sidecar_path(item.path)
+            legacy = True
+            if not path.is_file():
+                return self._new_document(item)
         try:
             doc = self._read_file(path)
         except (OSError, DrawingFormatError) as exc:
             self.log.append_error(f"Could not load {path.name}: {exc}")
             return self._new_document(item)
         doc = self._fit_document(doc, item)
-        self.log.append_ok(f"Loaded drawing: {path.name} ({_doc_summary(doc)})")
+        self.log.append_ok(f"Loaded drawing: {self._rel(path, item)} ({_doc_summary(doc)})")
+        if legacy:
+            self.log.append(f"This drawing is in the old location; the next save writes "
+                            f"{self._rel(sidecar_path(item.path), item)}.")
         return doc
+
+    @staticmethod
+    def _rel(path: Path, item: VideoItem) -> str:
+        """영상 폴더 기준 상대 경로 (로그용). 다른 폴더면 파일 이름만."""
+        try:
+            return path.relative_to(item.path.parent).as_posix()
+        except ValueError:
+            return path.name
 
     def _read_file(self, path: Path) -> DrawingDocument:
         doc = DrawingDocument.from_json(path.read_text(encoding="utf-8"))
@@ -617,6 +644,15 @@ class DrawTab(QWidget):
     def _scrub_started(self) -> None:
         self.controller.pause()
         self._scrub_base = self.controller.frame()
+
+    def snap_drawn(self, direction: int) -> None:
+        """그림이 있는 이전(-1) / 다음(+1) 프레임으로 이동한다."""
+        if self.doc is None or self.controller.item() is None:
+            return
+        cur = self.controller.frame()
+        target = self.doc.prev_drawn_frame(cur) if direction < 0 else self.doc.next_drawn_frame(cur)
+        if target is not None:
+            self.controller.step(target - cur)
 
     def _set_tool(self, tool: str) -> None:
         self.canvas.set_tool(tool)
@@ -722,6 +758,7 @@ class DrawTab(QWidget):
     def _save_to(self, path: Path) -> bool:
         assert self.doc is not None
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)     # <영상 폴더>/.draw
             path.write_text(self.doc.to_json(), encoding="utf-8")
         except OSError as exc:
             self.log.append_error(f"Could not save drawing: {exc}")
@@ -731,8 +768,10 @@ class DrawTab(QWidget):
                 return self.save_as()
             return False
         self.doc.dirty = False
-        self._doc_path = path if path != sidecar_path(self.controller.item().path) else None  # type: ignore[union-attr]
-        self.log.append_ok(f"Saved drawing: {path.name} ({_doc_summary(self.doc)})")
+        item = self.controller.item()
+        assert item is not None
+        self._doc_path = path if path != sidecar_path(item.path) else None
+        self.log.append_ok(f"Saved drawing: {self._rel(path, item)} ({_doc_summary(self.doc)})")
         self._doc_changed()
         return True
 
@@ -780,6 +819,8 @@ class DrawTab(QWidget):
             return
         item = self.model.item(row)
         path = (self._doc_path if row == self._row and self._doc_path else None) or sidecar_path(item.path)
+        if not path.is_file() and legacy_sidecar_path(item.path).is_file():
+            path = legacy_sidecar_path(item.path)
         if path.is_file():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
             self.log.append(f"Drawing file: {path}")
