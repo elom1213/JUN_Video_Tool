@@ -2,7 +2,7 @@
 
 - **Author**: Ji Hun Park (Junny / `Dnable_JunnyPark`)
 - **작성일**: 2026-10-14
-- **상태**: 설계 확정본. 구현 전.
+- **상태**: 설계 확정본. **2026-10-16 사용자 답변 · 추가 요청을 13장에 반영 — 13장이 앞 장과 충돌하면 13장이 우선한다.**
 - **선행 문서**: [`PLAN.md`](PLAN.md) (v0.1.0 ~ v0.2.0 설계). 이 문서는 PLAN.md 의 **3장(디렉터리) · 6장(UI) 을 덧쓰는 증분 계획**이다.
   PLAN.md 의 코어(변환기 · 추정 · 러너)와 컨벤션(9장) · Win10 규칙(12장)은 그대로 유효하다.
 - **대상 환경**: PLAN.md 와 동일 — Windows 10 (21H2+) / 11, Python 3.11, PySide6 6.x (개발 PC 6.11.1), `bin/ffmpeg.exe`.
@@ -29,7 +29,7 @@
 | D0 | 기존 영상 변환 기능 전부를 `Convert` 탭으로 이식 | `MainWindow` 의 변환 관련 본문을 `ConvertTab(QWidget)` 으로 그대로 옮긴다. 동작 · 단축키 · 설정 키는 바꾸지 않는다 (3장) |
 | D1 | Convert 처럼 영상을 리스트업하고 골라서 재생 · 정지 | Draw 탭에 **별도의** `VideoListModel` + `VideoListView` (체크박스 없음, 단일 선택). 선택한 항목을 `VideoCanvas` 에 표시, `Space` 로 재생/정지. 프레임 디코딩은 **ffmpeg rawvideo 파이프**(4.1) — QtMultimedia 를 쓰지 않는 이유는 2.1 |
 | D1b | Draw 탭에 리스트업된 파일도 **썸네일로 볼 수 있어야** 한다 (2026-10-14 추가 요청) | Convert 와 같은 `VideoItemDelegate` 두 모드(`List` / `Thumbnails`)를 그대로 쓴다. Draw 툴바에 `View: (● List ○ Thumbs)` 토글, `View` 메뉴 `Ctrl+1`/`Ctrl+2` 는 활성 탭의 리스트에 적용. 썸네일은 `MainWindow` 가 만든 **공유 `ThumbnailLoader`** 로 뽑아 두 탭이 캐시를 함께 쓴다 (같은 파일을 양쪽에 넣어도 1회 추출). 썸네일 모드 선택도 리스트 모드와 동일하게 `currentChanged` 로 캔버스에 영상이 올라간다. 설정 키 `draw/view_mode` 로 모드를 기억 |
-| D2 | `←`/`→` 키와 화면 위 좌우 드래그로 한 프레임씩 이동 | `←`/`→` = ±1 프레임, `Shift+←/→` = ±10, `Home`/`End` = 첫/끝. 캔버스 드래그는 **Scrub 모드**에서 좌드래그, 어떤 모드에서든 **가운데 버튼 드래그**. 기본 감도 8 px/프레임 (5.3) |
+| D2 | `←`/`→` 키와 화면 위 좌우 드래그로 한 프레임씩 이동 | `←`/`→` = ±1 프레임, `Shift+←/→` = ±10, `Home`/`End` = 첫/끝. 캔버스 스크럽은 **가운데 버튼 드래그만** (13.1 — Scrub 툴 모드 없음). 기본 감도 8 px/프레임 (5.3) |
 | D3 | 멈춘 화면 위 드래그로 선 그리기. 두께 · 색 변경 | **Draw 모드**에서 좌드래그 = 스트로크 1개. `BrushPanel` 에서 색(스와치 8개 + `QColorDialog`) · 두께(1~64, 소스 픽셀 단위) 변경. 재생 중 드래그하면 먼저 정지하고 그린다. Undo/Redo, Clear Frame 포함 (5.4) |
 | D4 | Ghosting — 그린 선이 앞뒤 프레임에서 반투명으로 보임. 범위는 사용자 선택 | `GhostPanel`: On/Off, `Before`(0~30), `After`(0~30), `Opacity`(5~100 %). 거리 d 의 투명도 = `opacity × (1 − (d−1)/N)` (7장). 재생 중에도 적용 |
 | D5 | 프레임별 그림 정보를 따로 저장 · 불러오기, 재생 화면과 같이 보기 | `DrawingDocument` → **영상 옆 사이드카** `<영상이름>.draw.json` (6장 스키마). `Save`(`Ctrl+S`) / `Save As…` / `Load…`(`Ctrl+L`). 영상을 선택할 때 사이드카가 있으면 **자동 로드**. 로드된 선은 정지 · 재생 · 스크럽 모두에서 캔버스 위에 그려진다 |
@@ -44,9 +44,9 @@
 
 ### 1.3 범위 밖 (이번에 하지 않음)
 
-- 오디오 재생. Draw 탭 재생은 무음이다 (ffmpeg `-an`).
-- 캔버스 줌 · 팬 (항상 Fit). 지우개 · 도형 · 텍스트 · 레이어. 스트로크 선택 · 이동.
-- 그림이 입힌 영상의 내보내기(burn-in). 구조는 열어 둔다 (10장).
+- ~~오디오 재생~~ → 13.1 로 범위에 들어옴.
+- 캔버스 줌 · 팬 (항상 Fit). 도형 · 텍스트 · 레이어. 스트로크 선택 · 이동. (~~지우개~~ → 13.3)
+- ~~그림이 입힌 영상의 내보내기(burn-in)~~ → 13.4 로 범위에 들어옴.
 - VFR(가변 프레임률) 영상의 정확한 프레임 매핑 — `avg_frame_rate` 를 CFR 로 간주한다 (9장 리스크).
 - Convert 와 Draw 리스트의 동기화(한쪽에 넣으면 다른 쪽에도 보이기). 리스트는 탭별로 독립이다.
 
@@ -653,3 +653,136 @@ QToolButton#Swatch:checked { border: 2px solid #ffffff; }
 4. Ghosting 범위 · 투명도를 바꾸면 앞뒤 프레임 선이 반투명으로 겹쳐 보이고 재생 중에도 유지된다.
 5. 저장한 `*.draw.json` 이 영상 선택 시 자동으로 올라오고, 다른 PC 의 같은 영상에서도 같은 자리에 그려진다.
 6. `pytest -q` 전부 통과, README · CHANGELOG · `version.py` 갱신.
+
+---
+
+## 13. 2026-10-16 사용자 답변 · 추가 요청 (v0.3.0 범위 확장)
+
+이 장은 앞 장보다 우선한다. 앞 장에서 이 장과 충돌하는 내용(무음 재생, Scrub 툴 모드, 지우개 · burn-in 범위 밖)은 무효다.
+
+| # | 요청 (원문 요지) | 결정 |
+|---|------------------|------|
+| A1 | Draw 탭 재생 시 음성도 재생, 음량 조절 | 13.1 `AudioPlayer` — ffmpeg `s16le` 파이프 → `QAudioSink`. 트랜스포트 바에 음소거 버튼 + 음량 슬라이더 |
+| A2 | 좌드래그는 그리기 전용, 스크럽은 가운데 버튼 드래그 | 13.2 — Scrub 툴 모드 삭제. 좌드래그 = 현재 툴(Draw/Erase), 가운데 드래그 = 스크럽 |
+| R1 | 그린 그림을 지우는 기능 | 13.3 Erase 툴 (부분 지우개, Undo 가능) + 기존 Clear Frame + 신규 Clear All Drawings |
+| R2 | 그림이 입혀진 영상을 MP4 · GIF 로 출력 | 13.4 `Export…` — 원본 + 오버레이 합성(burn-in), Convert 의 GIF/MP4 옵션 패널 재사용 |
+| R3 | GIF 도 Convert 탭에 올려서 더 압축된 GIF 로 변환 | 13.5 — `.gif` 를 입력 확장자에 추가, 원본 덮어쓰기 방지 |
+
+### 13.1 오디오 재생 (A1)
+
+- **엔진**: `app/ui/widgets/draw/audio_player.py` `AudioPlayer(QObject)`. 별도 ffmpeg 프로세스
+  `ffmpeg -hide_banner -loglevel error -nostdin -ss <t> -i <src> -vn -sn -ac 2 -ar 48000 -f s16le -` 의 stdout 을
+  리더 스레드가 읽어 `deque[bytes]` 에 쌓고, UI 스레드 `QTimer`(10 ms) 가 `QAudioSink`(push 모드, `start()` 가 준 `QIODevice`)
+  에 `bytesFree()` 만큼 쓴다. 포맷 48000 Hz · 2 ch · Int16 (`AUDIO_RATE`, `AUDIO_CHANNELS`). 기본 출력 장치가 없거나
+  포맷 미지원이면 로그 `No audio output device; playback is silent.` 후 무음으로 동작.
+- 명령 생성은 순수 함수 `app/core/frame_decoder.py::build_audio_command(ffmpeg, path, start_sec) -> list[str]` (테스트 대상).
+- **동기화**: 비디오 클럭(`QElapsedTimer`)이 주인이다. 오디오는 `play` 시 현재 프레임 시각 `frame / fps` 에서 시작하고,
+  `pause` · `seek`(재생 중) · 영상 변경 시 프로세스를 죽이고 버퍼를 비운다. 비디오가 디코드를 기다리는 동안(`_waiting`)
+  `QAudioSink.suspend()`, 재개 시 `resume()` — 그래서 멈칫해도 소리가 앞서 나가지 않는다. 장시간 드리프트 보정은 범위 밖.
+- **오디오 스트림 유무**: `MediaInfo.has_audio: bool = False` 추가. ffprobe 는 `-select_streams v:0` 를 빼고 `stream=codec_type,…`
+  를 받아 첫 `video` 스트림을 고르고, `audio` 가 하나라도 있으면 `True`. stderr 폴백은 `Stream #…: Audio:` 정규식.
+  `codec_type` 이 없는 옛 JSON(테스트 픽스처)은 `streams[0]` 를 비디오로 본다. `has_audio=False` 면 프로세스를 띄우지 않는다.
+- **UI**: `TransportBar` 오른쪽 끝에 음소거 `QToolButton`(체크, 아이콘 `volume` / `volume_mute`) + `QSlider` 0~100(폭 90).
+  설정 키 `draw/volume`(기본 80), `draw/muted`(기본 False). 음량은 `QAudioSink.setVolume(v/100)` (선형).
+  스크럽 · 프레임 스텝 중에는 소리를 내지 않는다(재생 중일 때만).
+
+### 13.2 마우스 규칙 (A2)
+
+| 입력 | 동작 |
+|------|------|
+| 좌버튼 드래그 | 툴이 `draw` 면 스트로크, `erase` 면 지우기. 재생 중이면 먼저 정지 |
+| 가운데 버튼 드래그 | 스크럽 (감도 `draw/scrub_px`, 2~40 px/frame). 툴과 무관 |
+| 우버튼 | 아무것도 안 함 |
+
+- 툴바 `Tool: (● Draw ○ Erase)`, 단축키 `D` / `E`. `S`(Scrub Tool) 는 없다. 설정 키 `draw/tool`.
+- 사이드 패널의 `Scrub` 그룹은 남긴다(라벨 `Middle-drag sensitivity`).
+
+### 13.3 지우기 (R1)
+
+- **Erase 툴**: 좌드래그 경로(화면 좌표 → 소스 좌표)를 지우개 원(반지름 = `eraser_size / 2`, 소스 px) 으로 쓸어,
+  스트로크의 **점 중 지우개 원 안에 드는 점(점-원 거리 ≤ r + stroke.width/2)** 을 제거하고 남은 점들을 연속 구간별로
+  **새 스트로크로 분할**한다 (부분 지우기). 점이 하나도 안 남는 스트로크는 사라진다. 순수 함수
+  `drawing.erase_strokes(strokes, path_points, radius) -> tuple[list[Stroke], bool]` (bool = 바뀜).
+  긴 선분 위를 지우개가 지나가도 지워지도록 지우기 전에 스트로크를 `max(1, width/2)` 소스 px 간격으로 보간(densify)한다.
+  드래그 중에는 화면에 즉시 반영(미리보기 = 그 프레임 리스트 사본에 적용), 릴리스 때 문서에 한 번의 편집으로 커밋.
+- 지우개 크기: `BrushPanel` 아래 `Eraser` 줄 `QSlider` 4~256 (소스 px, 기본 32, 키 `draw/eraser_size`).
+  Erase 툴일 때 캔버스에 지우개 원 외곽선을 마우스 위치에 그린다.
+- **Undo 구조 변경**: 4.2 의 "묶음" 스택을 **프레임별 스냅숏 스택**으로 바꾼다. `_undo[frame]` / `_redo[frame]` 의
+  항목은 편집 직전/직후의 그 프레임 스트로크 리스트 전체 사본. `add_stroke` · `clear_frame` · `replace_frame`(지우개) 모두
+  `_push_undo(frame)` 후 변경 → add/undo/redo/clear 시나리오(7장 표)는 그대로 성립한다.
+- `Clear All Drawings`(Draw 메뉴, 확인 질문 `Delete all drawings on every frame of '<name>'?`): 모든 프레임을 비운다.
+  프레임별 undo 스택에 각각 스냅숏을 넣으므로 프레임마다 Undo 로 되돌릴 수 있다.
+
+### 13.4 그림 입힌 영상 내보내기 (R2)
+
+- **진입**: Draw 툴바 `Export…` 버튼 / Draw 메뉴 `Export with Drawing…` (`Ctrl+E`). 영상이 선택돼 있어야 한다.
+- **다이얼로그** `app/ui/widgets/draw/export_dialog.py` `ExportDialog(QDialog)`:
+  `Format` 콤보(GIF / MP4 (H.264) — `registry` 순서), 선택 포맷의 **Convert 옵션 패널을 그대로 생성**
+  (`OptionsPanelFactory.create`, 설정 키는 Convert 와 별도로 `export/<format_id>/options_json`), `Include ghosting` 체크
+  (기본 OFF, 켜면 현재 Ghosting 설정 그대로 굽는다), 출력 파일 줄(`QLineEdit` + `Browse…`, 기본값
+  `<영상 폴더>/<stem>_draw.<ext>`, 존재하면 `make_output_path` 규칙으로 `_001`), 진행 바, `Export` / `Cancel` / `Close`.
+  목표 용량(Target size)도 Convert 와 같은 재시도 규칙(`degrade_for_retry`)으로 지원한다.
+- **파이프라인** (오버레이만 파이썬이 만든다 — 원본 디코드 · 인코딩은 ffmpeg 한 프로세스):
+  ```
+  ffmpeg -hide_banner -y -nostats -progress pipe:1 [-hwaccel auto] -i <src>
+         -f rawvideo -pix_fmt rgba -s <W>x<H> -framerate <fps> -i -
+         -filter_complex "[0:v]scale=W:H:flags=lanczos,setpts=N/(<fps>)/TB[base];
+                          [1:v]setpts=N/(<fps>)/TB[ov];[base][ov]overlay=0:0:eof_action=pass:format=auto<tail>"
+  ```
+  - `W×H` = 변환기의 `output_dimensions(item, options)` (MP4 는 짝수). 오버레이는 **출력 크기로 직접 그린다**
+    (스케일 = `H / src_h`) — 소스 해상도 RGBA 를 보내는 것보다 파이프 데이터가 작다.
+  - 두 입력 모두 `setpts=N/fps/TB` 로 정규화해 "N 번째 디코드 프레임 = Draw 탭 프레임 N" 을 맞춘다 (2.2 의 프레임 인덱스 규칙과 동일).
+  - GIF `<tail>` = `,fps=F,split[a][b];[a]palettegen=…[p];[b][p]paletteuse=dither=…` + `-loop n`.
+  - MP4 `<tail>` = `[,fps=F]` → `[v]` 후 `-map [v] -map 0:a? -c:v libx264 -crf … -preset … -pix_fmt yuv420p -movflags +faststart`
+    + 오디오(`aac` / `copy` / `-an`, Convert 와 동일).
+  - 구간(Frame range)은 없다 — 항상 전체 길이. `-ss/-t` 를 쓰지 않는다.
+  - 명령 생성은 순수 함수 `app/core/burnin.py::build_burnin_command(ffmpeg, item, converter, options, out_path) -> list[str]`
+    (hwaccel 은 `options.hwaccel`, 테스트 대상). 파이썬 쪽 워커 `app/ui/widgets/draw/export_worker.py` `ExportWorker(QThread)`:
+    프레임 0..frame_count-1 마다 투명 `QImage(W, H, Format_RGBA8888)` 에 `paint_strokes`(캔버스와 같은 함수,
+    `widgets/draw/stroke_painter.py`) 로 현재 프레임 + (옵션) 고스트를 그려 stdin 에 쓴다. 그림이 없는 프레임은 미리 만든
+    투명 바이트를 재사용. stdout(`-progress`) 은 별도 스레드가 읽어 `out_time_us` → 진행률, stderr 는 꼬리 40 줄 보관.
+    시그널 `progress(int)`, `log(str)`, `finished_ok(object path, int size, float elapsed)`, `failed(str)`. 취소 시 프로세스 kill + 출력 파일 삭제.
+  - `-hwaccel auto` 로 실패(종료 코드 ≠ 0 이고 stderr 에 하드웨어 표지)하면 `none` 으로 1회 재시도 (`job_runner` 와 같은 표지 목록).
+- 로그: `Exported: clip_a_draw.mp4 (3.2 MB, 12.4 s)`. 문서가 비어 있으면 질문 `This video has no drawings. Export anyway?`.
+
+### 13.5 GIF 입력 (R3)
+
+- `SUPPORTED_EXTENSIONS` 에 `.gif` 추가 → Convert · Draw 두 탭 모두 GIF 를 받는다. ffprobe 는 GIF 의 `avg_frame_rate` ·
+  `nb_frames` · `duration` 을 정상 보고한다 (2026-10-16 실측: 320x240 10 fps 2 s → `10/1`, `20`, `2.000000`).
+- 파일 대화상자 필터 이름을 `Media files (…)` 로 바꾼다.
+- **원본 덮어쓰기 방지**: GIF → GIF 를 같은 폴더 · 빈 접미사로 내보내면 출력 경로가 원본과 같아진다. `make_output_path` 는
+  후보가 **원본 자신과 같은 경로**(`normcase_path` 비교)면 `overwrite` 여부와 무관하게 `_001…` 번호를 붙인다. (테스트 추가)
+- GIF 의 가변 프레임 지연은 `avg_frame_rate` CFR 로 간주한다 (10장 VFR 리스크와 동일).
+- 압축용 기존 옵션(품질 → 색 수 · 디더, fps, 폭, 목표 용량)이 그대로 GIF 입력에 적용된다. 추가 옵션은 두지 않는다.
+
+### 13.6 상수 · 아이콘 · 설정 추가
+
+```python
+# constants.py
+SUPPORTED_EXTENSIONS 에 ".gif" 추가
+AUDIO_RATE = 48000
+AUDIO_CHANNELS = 2
+AUDIO_PUSH_INTERVAL_MS = 10
+DRAW_VOLUME_DEFAULT = 80
+DRAW_ERASER_DEFAULT = 32.0
+DRAW_ERASER_MIN, DRAW_ERASER_MAX = 4.0, 256.0
+EXPORT_SUFFIX = "_draw"
+```
+- 아이콘 추가(5.1 목록에서 `scrub` 제거): `eraser volume volume_mute export`.
+- 설정 키 추가: `draw/tool`, `draw/volume`, `draw/muted`, `draw/eraser_size`, `export/format`, `export/include_ghost`,
+  `export/<format_id>/options_json`.
+
+### 13.7 구현 순서 조정
+
+8장 P0~P8 순서를 유지하되: P4 = 가운데 드래그 스크럽 + Draw/Erase 툴 토글, P5 에 지우개 · Clear All 포함,
+**P6b** = 오디오(13.1), **P7b** = Export(13.4), **P1** 에 GIF 입력(13.5) 포함. 테스트 추가:
+`test_drawing.py`(지우개 분할 · 스냅숏 undo), `test_frame_decoder.py`(`build_audio_command`), `test_burnin.py`(GIF/MP4 명령),
+`test_utils.py`(원본 경로 회피), `test_probe_parser.py`(`has_audio`, `codec_type` 선택).
+
+### 13.8 완료 정의 추가
+
+7. Draw 탭 재생 시 소리가 나고, 음량 · 음소거가 동작한다. 정지 · 시크 시 소리가 멈추거나 새 위치에서 다시 시작한다.
+8. 좌드래그는 그리기/지우기만, 가운데 드래그는 스크럽만 한다.
+9. Erase 툴로 선 일부를 지우고 Undo 로 되돌린다.
+10. `Export…` 로 그림이 입혀진 MP4 · GIF 가 나오고, 그림이 Draw 탭에서 본 프레임과 같은 프레임에 있다 (testsrc 픽셀 검증).
+11. Convert 탭에 GIF 를 넣어 더 작은 GIF 로 변환되며, 원본 GIF 는 덮어써지지 않는다.
