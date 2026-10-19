@@ -19,7 +19,7 @@ def _after(cmd, flag):
 
 
 def test_registry_order():
-    assert registry.ids() == ["gif", "mp4"]
+    assert registry.ids() == ["gif", "mp4", "wav"]
     assert isinstance(registry.get("mp4"), Mp4Converter)
 
 

@@ -6,7 +6,7 @@ import pytest
 
 from app.config.constants import gif_params_for_quality
 from app.core.models import FrameRange, MediaInfo
-from app.core.utils import (fit_size, format_timecode, frame_to_sec, human_size, make_output_path,
+from app.core.utils import (normcase_path, fit_size, format_timecode, frame_to_sec, human_size, make_output_path,
                             resolve_dimensions, sec_to_frame)
 
 
@@ -101,3 +101,17 @@ def test_frame_timecode_non_drop():
     assert frame_timecode(0, 25) == "00:00:00:00"
     assert frame_timecode(25 * 3661 + 3, 25) == "01:01:01:03"
     assert frame_timecode(5, 0) == "00:00:05:00"
+
+
+def test_make_output_path_taken_avoids_batch_collisions(tmp_path: Path):
+    # voice.m4a · voice.ogg → 같은 voice_wav.wav 가 되면 안 된다 (같은 배치에서 서로 덮어쓰기)
+    a, b, w = tmp_path / "voice.m4a", tmp_path / "voice.ogg", tmp_path / "voice.wav"
+    for p in (a, b, w):
+        p.write_bytes(b"x")
+    taken = {normcase_path(p) for p in (a, b, w)}
+    first = make_output_path(a, None, "_wav", ".wav", overwrite=True, taken=taken)
+    second = make_output_path(b, None, "_wav", ".wav", overwrite=True, taken=taken)
+    assert (first, second) == (tmp_path / "voice_wav.wav", tmp_path / "voice_wav_001.wav")
+    # 접미사를 비우면 voice.m4a → voice.wav 가 배치의 다른 원본 voice.wav 를 덮지 않는다
+    taken = {normcase_path(p) for p in (a, w)}
+    assert make_output_path(a, None, "", ".wav", overwrite=True, taken=taken) == tmp_path / "voice_001.wav"

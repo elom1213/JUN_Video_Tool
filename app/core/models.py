@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-20
 """코어 데이터 모델 (PLAN 5.1). PySide6 비의존."""
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ class MediaInfo:
     codec: str
     size_bytes: int
     has_audio: bool = False      # 오디오 스트림 존재 (Draw 탭 재생 · 내보내기)
+    # 음성 전용 파일: width = height = 0, fps = AUDIO_TIMELINE_FPS (1 프레임 = 1 ms), codec = 오디오 코덱
+    audio_only: bool = False
+    sample_rate: int = 0         # 첫 오디오 스트림 (없으면 0)
+    channels: int = 0
 
     @property
     def aspect(self) -> float:
@@ -118,3 +122,5 @@ class ConvertResult:
     canceled: bool = False
     message: str = ""
     log_lines: list[str] = field(default_factory=list)
+    check_level: str = "ok"          # 변환기 post_check 결과: "ok" | "warn" | "error"
+    check_message: str = ""

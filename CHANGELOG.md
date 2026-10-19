@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — 2026-10-20
+
+- **WAV 출력 (JUN_JALI 용)**: Convert 탭 `Output format` 에 `WAV (JUN_JALI 44.1 kHz 16-bit mono)` 추가.
+  영상 · 음성 파일의 첫 오디오 스트림을 44100 Hz · 16-bit PCM · 모노 wav (메타데이터 없는 44 바이트 헤더) 로 뽑는다 —
+  JUN_JALI VisemeNet Converter 의 입력 규격(`wav_check.py`)이며 마야 sound 노드도 그대로 읽는다.
+  채널: 평균 섞기(기본) / 왼쪽 / 오른쪽. 구간은 리샘플 뒤 샘플 수로 정확히 자른다. 용량은 정확히 계산된다.
+- **변환 뒤 JUN_JALI 규칙 검사** (`app/core/jali_wav.py`, 표준 라이브러리만): E03 샘플레이트 · E04 형식 · E05 채널 ·
+  E06 너무 짧음 · E07 너무 김 · E08 무음 · W01 스테레오 · W02 클리핑. 통과하면 `JUN_JALI ready`, E06 · E08 은 실패로 표시.
+  JUN_JALI 실제 `check_wav()` 로도 검증 (`dev/check_wav.py --jali-python`).
+- **음성 파일 입력**: Convert 탭이 mp3 · m4a · aac · flac · ogg · oga · opus · wma · aif · aiff · ac3 · amr · caf · mka · 3gp · wav 를 받는다.
+  probe 가 비디오 없는 파일을 음성 전용(`MediaInfo.audio_only`, 1 프레임 = 1 ms)으로 읽고, mp3 · m4a 의 앨범 아트
+  (`attached_pic`)는 영상으로 치지 않는다. 리스트에 `Audio <코덱> · 48 kHz stereo …`, 썸네일 자리에 스피커 아이콘,
+  `Frame Range` 는 ms 단위. GIF · MP4 는 음성 파일을, WAV 는 소리 없는 영상을 건너뛴다 (`BaseConverter.skip_reason`).
+  Draw 탭은 영상만 받는다.
+- **출력 이름 충돌 수정**: 같은 배치에서 출력 이름이 겹치면(`voice.m4a` · `voice.ogg` → `voice_wav.wav`) 서로 덮어쓰던 문제.
+  배치 안의 다른 원본도 덮어쓰지 않는다 (`make_output_path(..., taken)`). GIF · MP4 에도 적용된다.
+- `BaseConverter`: `needs_video` · `needs_audio` · `skip_reason()` · `heuristic_level()` · `post_check()`.
+- `dev/check_wav.py`, `tests/test_wav_converter.py`.
+
 ## 0.3.3 — 2026-10-19
 
 - **Draw 탭 디코드 해상도 선택**: `Resolution & Cache` 패널에서 원본 / 75 / 50 / 25 % (기본 원본, 설정에 저장).

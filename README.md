@@ -1,6 +1,7 @@
 # JUN_Video_Tool
 
-영상 파일(mp4 · mov · gif 등)을 여러 개 골라 **GIF 또는 MP4(H.264) 로 벌크 변환**하고(`Convert` 탭),
+영상 파일(mp4 · mov · gif 등)을 여러 개 골라 **GIF 또는 MP4(H.264) 로 벌크 변환**하고, 영상 · 음성 파일의 소리를
+**JUN_JALI 용 WAV** 로 뽑고(`Convert` 탭),
 영상을 프레임 단위로 넘기며 **그 위에 선을 그려 리뷰**하는(`Draw` 탭) Windows 데스크톱 툴.
 PySide6 + ffmpeg. Windows 10 (21H2+) / 11.
 
@@ -53,6 +54,25 @@ ffmpeg 를 직접 구했다면 `ffmpeg.exe` 와 `ffprobe.exe` 를 `bin/` 에 넣
 GIF 도 입력으로 받으므로, 큰 GIF 를 넣어 품질 · 크기 · 목표 용량을 낮춰 더 작은 GIF 로 다시 만들 수 있다
 (같은 폴더 · 빈 접미사여도 원본은 덮어쓰지 않고 `_001` 을 붙인다).
 
+### WAV (JUN_JALI 립싱크용)
+
+`Output format` 을 **`WAV (JUN_JALI 44.1 kHz 16-bit mono)`** 로 고르면 영상(mp4 · mov …)과 음성 파일
+(mp3 · m4a · aac · flac · ogg · opus · wma · aiff · 규격 밖 wav 등)의 소리를 **JUN_JALI(VisemeNet Converter) 가
+그대로 받는 wav** 로 만든다. 그 wav 를 JUN_JALI 에 넣어 변환하면 마야(A00540 JALI LipSync)에서 쓸 수 있다.
+
+- 출력 규격은 고정: **44100 Hz · 16-bit PCM · 모노**, 메타데이터 청크 없는 44 바이트 헤더. JUN_JALI 는 리샘플을 하지
+  않아서 48 kHz · float 등 다른 규격은 에러 없이 틀린 립싱크가 나온다 — 이 포맷이 그걸 맞춰 준다.
+- `Channels`: 모델은 한 채널만 쓰므로 모노로 만든다. 기본 `Mix all channels`(평균, 클리핑 없음).
+  한쪽 채널에만 목소리가 녹음됐으면 `Left` / `Right channel only`.
+- `Max length`: JUN_JALI 의 Max length (기본 120 초). 넘으면 시작 전에 경고하고 결과에 `E07` 을 표시한다 —
+  `Frame Range` 로 잘라 여러 번 변환하거나 JUN_JALI 쪽 값을 늘린다. 0.5 초보다 짧으면 JUN_JALI 가 거부한다.
+- 음성 파일의 `Frame Range` 는 **밀리초 단위**다 (구간은 샘플 수까지 정확히 자른다).
+- `Check the output against JUN_JALI rules`(기본 켬): 변환이 끝난 wav 를 JUN_JALI 와 같은 규칙(E03 ~ E08 · W01 ~ W02)
+  으로 다시 읽어, 통과하면 로그에 `JUN_JALI ready (44100 Hz · int16 · 1 ch · …)`, 무음(`E08`) · 너무 짧음(`E06`) 은
+  실패로 표시한다 (파일은 남는다).
+- 소리가 없는 영상은 건너뛰고, GIF · MP4 포맷에서는 음성 파일을 건너뛴다. Draw 탭은 영상만 받는다.
+- 이름이 겹치는 원본(`voice.mp3` · `voice.ogg`)은 `voice_wav.wav` · `voice_wav_001.wav` 로 따로 쓴다.
+
 ## 사용 — Draw 탭
 
 1. `Add Files` / `Add Folder` / 드래그&드롭(캔버스 위에 놓아도 된다)으로 영상을 넣고 리스트에서 하나를 고른다 (`List` / `Thumbnails` 보기).
@@ -89,6 +109,7 @@ GIF 도 입력으로 받으므로, 큰 GIF 를 넣어 품질 · 크기 · 목표
 pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q
 python dev/check_draw.py        # Draw 탭 통합 검증 (오프스크린, 합성 영상)
+python dev/check_wav.py         # WAV(JUN_JALI) 변환 통합 검증 (--jali-python <numpy·scipy 있는 python> 로 JUN_JALI 실제 검사)
 python launch.py
 ```
 

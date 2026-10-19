@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-20
 """전역 상수 · 품질 매핑 · 휴리스틱 계수.
 
 PySide6 를 import 하지 않는다 (core 와 테스트에서 공유).
@@ -13,10 +13,28 @@ from dataclasses import dataclass
 # ---------------------------------------------------------------------------
 # 지원 확장자
 # ---------------------------------------------------------------------------
-SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
+VIDEO_EXTENSIONS: frozenset[str] = frozenset({
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv",
     ".mpg", ".mpeg", ".flv", ".ts", ".mts", ".gif",
 })
+# 음성 파일 (Convert 탭 WAV 변환 입력). .wav 도 받는다 — 48 kHz · float 같은 규격 밖 wav 를 맞추기 위해
+AUDIO_EXTENSIONS: frozenset[str] = frozenset({
+    ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wma",
+    ".aif", ".aiff", ".ac3", ".amr", ".caf", ".mka", ".3gp",
+})
+SUPPORTED_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS   # Convert 탭
+DRAW_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS                        # Draw 탭 (그림은 영상 위에만)
+
+# 음성 전용 파일의 구간 단위. 프레임이 없으므로 1 ms 를 한 "프레임" 으로 친다 (FrameRange · 진행률 계산 공용)
+AUDIO_TIMELINE_FPS = 1000.0
+
+# JUN_JALI (VisemeNet Converter) 입력 규격 — JUN_JALI/tools/VisemeNet_Converter/app/core/wav_check.py
+# 모델은 리샘플을 하지 않고 정규화 값이 44.1 kHz · 16 bit 기준이라 규격이 다르면 에러 없이 틀린 결과가 나온다
+JALI_SAMPLE_RATE = 44100
+JALI_MIN_SECONDS = 0.5
+JALI_MAX_SECONDS = 120.0           # 변환기 Max length 기본값 (사용자가 늘릴 수 있다)
+JALI_CLIP_LEVEL = 32760
+JALI_CLIP_RATIO_WARN = 0.001
 
 # ---------------------------------------------------------------------------
 # UI 치수 · 색상 (델리게이트가 qss 와 같은 색을 쓰기 위해 여기에 둔다)

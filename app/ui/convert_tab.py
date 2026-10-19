@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-20
 """Convert 탭 (PLAN_DRAW_TAB 3장). v0.2.x 의 MainWindow 본문을 그대로 옮긴 것 — 동작 · 단축키 · 설정 키는 같다."""
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from ..core.job_runner import JobRunner
 from ..core.models import ConvertJob, ConvertOptions, ConvertResult, FrameRange, ItemStatus, MediaInfo
 from ..core.size_estimator import make_est_key
 from ..core.thumbnail import representative_time
-from ..core.utils import human_size, make_output_path
-from .icons import icon
-from .widgets import gif_options_panel, mp4_options_panel  # noqa: F401  (팩토리 등록)
+from ..core.utils import human_size, make_output_path, normcase_path
+from .icons import icon, pixmap
+from .widgets import gif_options_panel, mp4_options_panel, wav_options_panel  # noqa: F401  (팩토리 등록)
 from .widgets.frame_range_panel import FrameRangePanel
 from .widgets.loaders import ProbeLoader, SizeEstimator, ThumbnailLoader
 from .widgets.log_panel import LogPanel
@@ -31,7 +31,13 @@ from .widgets.output_panel import OutputPanel
 from .widgets.video_list_model import VideoListModel
 from .widgets.video_list_view import VideoListView
 
-MEDIA_FILTER = "Media files (" + " ".join(f"*{e}" for e in sorted(C.SUPPORTED_EXTENSIONS)) + ");;All files (*.*)"
+def _filter(label: str, exts: frozenset[str]) -> str:
+    return f"{label} (" + " ".join(f"*{e}" for e in sorted(exts)) + ")"
+
+
+MEDIA_FILTER = ";;".join((_filter("Media files", C.SUPPORTED_EXTENSIONS), _filter("Video files", C.VIDEO_EXTENSIONS),
+                          _filter("Audio files", C.AUDIO_EXTENSIONS), "All files (*.*)"))
+VIDEO_FILTER = ";;".join((_filter("Video files", C.DRAW_EXTENSIONS), "All files (*.*)"))
 
 
 class ConvertTab(QWidget):
@@ -347,6 +353,7 @@ class ConvertTab(QWidget):
             # 떠나는 포맷의 옵션은 보관해 두었다가 다시 돌아오면 복원한다
             self.settings.save_options(self._options_panel.get_options())
             self._options_slot.removeWidget(self._options_panel)
+            self._options_panel.hide()       # deleteLater 는 이벤트 루프로 돌아가야 지운다 — 그 사이 겹쳐 그려지지 않게
             self._options_panel.deleteLater()
             self._options_panel = None
         self._converter = registry.get(format_id)
@@ -449,8 +456,12 @@ class ConvertTab(QWidget):
         if row < 0:
             return
         self.model.set_info(row, info, None)
-        key = self.thumb_loader.request(path, representative_time(info), C.THUMB_WIDTH)
-        self._thumb_keys[key] = path
+        if info.audio_only:
+            # 음성 파일은 뽑을 화면이 없다 → 스피커 아이콘
+            self.model.set_thumbnail(row, pixmap("volume", 64))
+        else:
+            key = self.thumb_loader.request(path, representative_time(info), C.THUMB_WIDTH)
+            self._thumb_keys[key] = path
         if self.view.currentIndex().row() == row:
             self._current_changed(row)
         self._schedule_estimates()
@@ -526,6 +537,11 @@ class ConvertTab(QWidget):
             if it.info is None or it.status in (ItemStatus.RUNNING, ItemStatus.QUEUED):
                 continue
             key = make_est_key(it.path, it.effective_range(), options)
+            if self._converter.skip_reason(it) is not None:
+                # 이 포맷으로는 변환하지 않는 항목 (영상 포맷의 음성 파일 · WAV 의 무음 영상)
+                self.model.update_item(r, est_key=key)
+                self.model.set_estimate(r, key, None, "none")
+                continue
             if it.est_key == key and it.est_level in ("sampled", "exact"):
                 continue
             if it.est_key and it.est_key != key and it.status in (ItemStatus.DONE, ItemStatus.FAILED,
@@ -533,9 +549,10 @@ class ConvertTab(QWidget):
                 # 변환 뒤 옵션·포맷·구간이 바뀌면 이전 결과 표시를 지우고 새 추정을 보여 준다
                 self.model.update_item(r, status=ItemStatus.IDLE, progress=0, message="", output_path=None)
             heuristic = self._converter.heuristic_size(it, options)
+            level = self._converter.heuristic_level() if heuristic is not None else "none"
             self.model.update_item(r, est_key=key)
-            self.model.set_estimate(r, key, heuristic, "heuristic" if heuristic is not None else "none")
-            if use_samples and heuristic is not None:
+            self.model.set_estimate(r, key, heuristic, level)
+            if use_samples and level == "heuristic":
                 self.estimator.request(r, it, self._converter, options)
         self._update_total_label()
 
@@ -565,7 +582,7 @@ class ConvertTab(QWidget):
         pending = 0
         for r in self.model.checked_rows():
             it = self.model.item(r)
-            if it.info is None or it.status == ItemStatus.DONE:
+            if it.info is None or it.status == ItemStatus.DONE or self._converter.skip_reason(it) is not None:
                 continue
             files += 1
             if it.est_size is not None:
@@ -598,19 +615,27 @@ class ConvertTab(QWidget):
             return
         rows = self.model.checked_rows()
         if not rows:
-            QMessageBox.information(self, "Nothing to convert", "Check at least one video.")
+            QMessageBox.information(self, "Nothing to convert", "Check at least one file.")
             return
 
         jobs: list[tuple[int, ConvertJob]] = []
         warnings: list[str] = []
+        # 이 배치의 원본들과 이미 배정한 출력 — 이름이 겹치는 원본(voice.mp3 · voice.ogg)끼리, 또는 다른 원본
+        # (voice.mp3 → voice.wav 가 원본 voice.wav) 을 덮어쓰지 않게 한다
+        taken = {normcase_path(self.model.item(r).path) for r in rows}
         for r in rows:
             it = self.model.item(r)
             if it.info is None:
                 self.model.update_item(r, status=ItemStatus.SKIPPED, message=it.probe_error or "No media info")
                 self.log.append(f"[{it.path.name}] Skipped: {it.probe_error or 'not probed yet'}")
                 continue
+            reason = self._converter.skip_reason(it)
+            if reason is not None:
+                self.model.update_item(r, status=ItemStatus.SKIPPED, message=reason[:1].upper() + reason[1:])
+                self.log.append(f"[{it.path.name}] Skipped for {self._converter.display_name}: {reason}.")
+                continue
             out = make_output_path(it.path, options.output_dir, options.suffix, self._converter.extension,
-                                   options.overwrite)
+                                   options.overwrite, taken)
             if len(str(out)) > C.MAX_OUTPUT_PATH_LEN:
                 warnings.append(f"{it.path.name}: output path is too long for Windows (>{C.MAX_OUTPUT_PATH_LEN} chars).")
             w = self._converter.estimate_warning(it, options)
@@ -685,6 +710,14 @@ class ConvertTab(QWidget):
             note = f" — {res.message}" if res.message and res.message != human_size(res.output_size) else ""
             self.log.append_ok(f"[{name}] -> {res.job.output_path.name} ({human_size(res.output_size)}, "
                                f"{res.elapsed:.1f} s, {res.attempts} attempt{'s' if res.attempts != 1 else ''}{extra}){note}")
+            if res.check_message:
+                (self.log.append_error if res.check_level == "warn" else self.log.append)(
+                    f"[{res.job.output_path.name}] {res.check_message}")
+        elif res.check_level == "error":
+            # 변환은 됐지만 출력 검사(JUN_JALI 규칙)에 걸림 — 파일은 남긴다
+            self.model.update_item(row, status=ItemStatus.FAILED, message=res.check_message, progress=0,
+                                   output_path=res.job.output_path)
+            self.log.append_error(f"[{name}] -> {res.job.output_path.name} written, but {res.check_message}")
         else:
             self.model.update_item(row, status=ItemStatus.FAILED, message=res.error or "Failed", progress=0)
             self.log.append_error(f"[{name}] Failed: {res.error.splitlines()[-1] if res.error else 'unknown error'}")

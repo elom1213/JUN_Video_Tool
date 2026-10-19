@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-20
 """변환 작업 실행기 (PLAN 5.7). core 에서 유일하게 PySide6.QtCore 를 쓴다."""
 from __future__ import annotations
 
@@ -134,8 +134,18 @@ class JobRunner(QThread):
                 return ConvertResult(job=job, ok=True, output_size=last_size, attempts=attempt,
                                      message=msg, elapsed=time.time() - t0)
 
-            return ConvertResult(job=job, ok=True, output_size=last_size, attempts=attempt,
-                                 message=human_size(last_size), elapsed=time.time() - t0)
+            res = ConvertResult(job=job, ok=True, output_size=last_size, attempts=attempt,
+                                message=human_size(last_size), elapsed=time.time() - t0)
+            # 출력 검사 (WAV: JUN_JALI 규칙). error 면 실패로 표시하되 파일은 남긴다 — 무엇이 문제인지 볼 수 있게
+            try:
+                res.check_level, res.check_message = self._conv.post_check(job.output_path, job.item, opts)
+            except Exception as exc:
+                res.check_level, res.check_message = "error", f"Output check failed: {exc}"
+            if res.check_level == "error":
+                res.ok = False
+                res.error = res.check_message
+                res.message = "Failed"
+            return res
 
     # ------------------------------------------------------------------ 프로세스
     def _exec(self, row: int, cmd: list[str], dur_sec: float) -> tuple[int, str]:

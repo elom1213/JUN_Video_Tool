@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-20
 """순수 유틸리티: 프레임↔초 변환, 크기 계산, 출력 경로, 서브프로세스 플래그."""
 from __future__ import annotations
 
@@ -102,25 +102,32 @@ def resolve_dimensions(src_w: int, src_h: int, w: int | None, h: int | None) -> 
     return src_w, src_h
 
 
-def make_output_path(src: Path, out_dir: Path | None, suffix: str, ext: str, overwrite: bool) -> Path:
+def make_output_path(src: Path, out_dir: Path | None, suffix: str, ext: str, overwrite: bool,
+                     taken: set[str] | None = None) -> Path:
     """<out_dir or src.parent>/<stem><suffix><ext>. overwrite=False 이고 존재하면 _001, _002 … 를 붙인다.
 
     후보가 원본 파일 자신이면(GIF → GIF, 같은 폴더, 빈 접미사) overwrite 여부와 무관하게 번호를 붙인다.
+    taken: 같은 배치에서 이미 배정한 출력 경로(normcase). 이름이 겹치는 원본(voice.mp3 · voice.wav → voice.wav)이
+    서로 덮어쓰지 않게 overwrite 여부와 무관하게 피하고, 고른 경로를 여기에 더한다.
     """
     src = Path(src)
     base_dir = Path(out_dir) if out_dir else src.parent
     if not ext.startswith("."):
         ext = "." + ext
     src_key = normcase_path(src)
+    used = taken if taken is not None else set()
+
+    def free(c: Path) -> bool:
+        key = normcase_path(c)
+        return key != src_key and key not in used and (overwrite or not c.exists())
+
     candidate = base_dir / f"{src.stem}{suffix}{ext}"
-    if normcase_path(candidate) != src_key and (overwrite or not candidate.exists()):
-        return candidate
-    n = 1
-    while True:
-        candidate = base_dir / f"{src.stem}{suffix}_{n:03d}{ext}"
-        if normcase_path(candidate) != src_key and (overwrite or not candidate.exists()):
-            return candidate
+    n = 0
+    while not free(candidate):
         n += 1
+        candidate = base_dir / f"{src.stem}{suffix}_{n:03d}{ext}"
+    used.add(normcase_path(candidate))
+    return candidate
 
 
 def human_size(n_bytes: int | float | None) -> str:

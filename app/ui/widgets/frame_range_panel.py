@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
-"""프레임 구간 편집 패널 (PLAN 6.7)."""
+# last Update date : 2026-10-20
+"""프레임 구간 편집 패널 (PLAN 6.7). 음성 파일은 1 ms 단위 구간 (MediaInfo.audio_only)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -17,6 +17,13 @@ from ...core.utils import format_timecode, frame_to_sec
 from ..icons import icon
 from .loaders import ThumbnailLoader
 from .range_slider import RangeSlider
+
+
+def _clock(sec: float) -> str:
+    """초 → "MM:SS.mmm" (음성 구간 표시)."""
+    sec = max(0.0, sec)
+    m, s = divmod(sec, 60.0)
+    return f"{int(m):02d}:{s:06.3f}"
 
 
 class _PreviewLabel(QLabel):
@@ -132,8 +139,10 @@ class FrameRangePanel(QGroupBox):
             self.frames_label.setText("")
             return
         self._set_enabled(True)
-        self.hint_label.setText(item.path.name)
         info = item.info
+        self.hint_label.setText(item.path.name + ("  (audio - range in milliseconds)" if info.audio_only else ""))
+        for sp in (self.start_spin, self.end_spin):
+            sp.setSuffix(" ms" if info.audio_only else "")
         rng = item.effective_range()
         self._updating = True
         self.slider.setRange(0, info.last_frame)
@@ -201,10 +210,15 @@ class FrameRangePanel(QGroupBox):
             return
         info = self._item.info
         lo, hi = self.slider.values()
-        self.start_tc.setText(format_timecode(frame_to_sec(lo, info.fps), info.fps))
-        self.end_tc.setText(format_timecode(frame_to_sec(hi, info.fps), info.fps))
         rng = FrameRange(lo, hi)
         _, dur = rng.to_seconds(info.fps)
+        if info.audio_only:
+            self.start_tc.setText(_clock(frame_to_sec(lo, info.fps)))
+            self.end_tc.setText(_clock(frame_to_sec(hi + 1, info.fps)))
+            self.frames_label.setText(f"Length: {dur:.3f} s / {info.duration:.3f} s")
+            return
+        self.start_tc.setText(format_timecode(frame_to_sec(lo, info.fps), info.fps))
+        self.end_tc.setText(format_timecode(frame_to_sec(hi, info.fps), info.fps))
         text = f"Frames: {rng.frame_count} / {info.frame_count} ({dur:.1f} s)"
         if self._output_fps > 0:
             text += f" → {output_frames(dur, self._output_fps)} output frames @ {self._output_fps:g} fps"
@@ -242,6 +256,11 @@ class FrameRangePanel(QGroupBox):
         info = self._item.info
         lo, hi = self.slider.values()
         self._wait_keys.clear()
+        if info.audio_only:
+            for prev in (self.start_preview, self.end_preview):
+                prev.setPixmap(QPixmap())
+                prev.setText("Audio")
+            return
         for which, frame in (("start", lo), ("end", hi)):
             t = clamp_time(frame_to_sec(frame, info.fps), info)
             key = self._thumbs.request(self._item.path, t, C.PREVIEW_WIDTH)

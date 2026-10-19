@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-20
 """변환기 추상화 (PLAN 5.5). 새 포맷은 이 클래스를 구현해 registry 에 등록한다."""
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ class BaseConverter(ABC):
     display_name: str = ""
     extension: str = ""
     options_cls: type[ConvertOptions] = ConvertOptions
+    needs_video: bool = True       # 비디오 스트림이 있어야 한다 (음성 전용 파일은 건너뜀)
+    needs_audio: bool = False      # 오디오 스트림이 있어야 한다 (WAV)
 
     # ----- 필수 -----
     @abstractmethod
@@ -58,6 +60,25 @@ class BaseConverter(ABC):
 
     def heuristic_size(self, item: VideoItem, options: ConvertOptions) -> int | None:
         return None
+
+    def heuristic_level(self) -> str:
+        """heuristic_size 의 신뢰도: "heuristic"(샘플 추정으로 다듬음) | "exact"(무압축처럼 계산이 곧 정답)."""
+        return "heuristic"
+
+    def skip_reason(self, item: VideoItem) -> str | None:
+        """이 포맷으로 변환할 수 없는 항목이면 이유 (영어 문장)."""
+        info = item.info
+        if info is None:
+            return None
+        if self.needs_video and info.audio_only:
+            return "audio file - no video stream (use WAV output)"
+        if self.needs_audio and not info.has_audio:
+            return "no audio stream"
+        return None
+
+    def post_check(self, output_path: Path, item: VideoItem, options: ConvertOptions) -> tuple[str, str]:
+        """변환 성공 뒤 출력 검사. ("ok" | "warn" | "error", 메시지). error 면 실패로 표시하되 파일은 남긴다."""
+        return "ok", ""
 
     def supports_sample_estimate(self) -> bool:
         return True

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-20
 """영상 목록 모델 (PLAN 6.2)."""
 from __future__ import annotations
 
@@ -21,9 +21,18 @@ def _fps_text(fps: float) -> str:
     return f"{fps:.2f}"
 
 
+def _audio_text(info: MediaInfo) -> str:
+    rate = f"{info.sample_rate / 1000:g} kHz" if info.sample_rate else "? kHz"
+    ch = {1: "mono", 2: "stereo"}.get(info.channels, f"{info.channels} ch" if info.channels else "? ch")
+    return f"{rate} {ch}"
+
+
 def info_text(info: MediaInfo | None, error: str | None = None) -> str:
     if info is None:
         return error or "Probing…"
+    if info.audio_only:
+        return (f"Audio {info.codec} · {_audio_text(info)} · "
+                f"{format_duration(info.duration)} · {human_size(info.size_bytes)}")
     return (f"{info.width}x{info.height} · {_fps_text(info.fps)} fps · "
             f"{format_duration(info.duration)} · {human_size(info.size_bytes)}")
 
@@ -40,8 +49,10 @@ class VideoListModel(QAbstractListModel):
     rows_added = Signal(list)       # list[int]
     check_changed = Signal()
 
-    def __init__(self, parent=None, *, checkable: bool = True, show_status: bool = True) -> None:
+    def __init__(self, parent=None, *, checkable: bool = True, show_status: bool = True,
+                 extensions: frozenset[str] = C.SUPPORTED_EXTENSIONS) -> None:
         super().__init__(parent)
+        self._extensions = extensions      # 받는 확장자 (Draw 탭은 영상만)
         # Draw 탭 리스트는 체크박스 · 상태 · 추정 열이 없다 (PLAN_DRAW_TAB 3.4)
         self._checkable = checkable
         self._show_status = show_status
@@ -153,7 +164,7 @@ class VideoListModel(QAbstractListModel):
         new_items: list[VideoItem] = []
         for p in paths:
             p = Path(p)
-            if p.suffix.lower() not in C.SUPPORTED_EXTENSIONS or not p.is_file():
+            if p.suffix.lower() not in self._extensions or not p.is_file():
                 skipped += 1
                 continue
             key = normcase_path(p)

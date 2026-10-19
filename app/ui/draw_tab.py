@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-20
 """Draw 탭 (PLAN_DRAW_TAB 5장, 13장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
@@ -24,7 +24,7 @@ from ..core.memory_info import format_gib, full_cache_budget, plan_cache_range, 
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
 from ..core.utils import human_size
-from .convert_tab import MEDIA_FILTER
+from .convert_tab import VIDEO_FILTER
 from .icons import icon
 from .widgets.draw.audio_player import AudioPlayer
 from .widgets.draw.brush_panel import BrushPanel
@@ -57,7 +57,7 @@ class DrawTab(QWidget):
         super().__init__(parent)
         self.settings = settings
         self.thumb_loader = thumb_loader
-        self.model = VideoListModel(self, checkable=False, show_status=False)
+        self.model = VideoListModel(self, checkable=False, show_status=False, extensions=C.DRAW_EXTENSIONS)
         self.probe_loader = ProbeLoader(self)
         self.provider = FrameProvider(self)
         self.audio = AudioPlayer(self)
@@ -449,7 +449,7 @@ class DrawTab(QWidget):
     def add_files(self) -> None:
         if not self.act_add_files.isEnabled():
             return
-        files, _ = QFileDialog.getOpenFileNames(self, "Add media files", self.settings.last_input_dir, MEDIA_FILTER)
+        files, _ = QFileDialog.getOpenFileNames(self, "Add video files", self.settings.last_input_dir, VIDEO_FILTER)
         if files:
             self.settings.last_input_dir = str(Path(files[0]).parent)
             self.add_paths([Path(f) for f in files])
@@ -469,7 +469,7 @@ class DrawTab(QWidget):
         added, skipped = self.model.add_paths(paths)
         msg = f"Added {added} file{'s' if added != 1 else ''}"
         if skipped:
-            msg += f" ({skipped} skipped: unsupported or duplicate)"
+            msg += f" ({skipped} skipped: not a video or duplicate)"
         self.log.append(msg + ".")
 
     def _rows_added(self, rows: list[int]) -> None:
@@ -507,8 +507,9 @@ class DrawTab(QWidget):
         if row < 0:
             return
         self.model.set_info(row, info, None)
-        key = self.thumb_loader.request(path, representative_time(info), C.THUMB_WIDTH)
-        self._thumb_keys[key] = path
+        if not info.audio_only:
+            key = self.thumb_loader.request(path, representative_time(info), C.THUMB_WIDTH)
+            self._thumb_keys[key] = path
         if self.view.currentIndex().row() == row and self.controller.item() is None:
             self._load_video(row)
 
@@ -568,6 +569,12 @@ class DrawTab(QWidget):
             self._row = row if item is not None else -1
             if item is not None:
                 self.canvas.clear(item.probe_error and f"Cannot open this file: {item.probe_error}" or "Probing…")
+            return
+        if item.info.audio_only:
+            # 확장자는 영상인데 소리만 든 파일 (.mp4 로 된 음성 등) — 그릴 화면이 없다
+            self._unload()
+            self._row = row
+            self.canvas.clear("This file has no video stream. Convert it to WAV in the Convert tab.")
             return
         info = item.info
         self._row = row
