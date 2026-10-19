@@ -90,7 +90,7 @@ def sequential_hashes(ff: Path, path: Path, hwaccel: str = "none") -> list[str]:
 
 def read_frames(ff: Path, path: Path, frames: list[int]) -> dict[int, tuple[bytes, int, int]]:
     info = probe(path)
-    spec = make_decode_spec(info, max_width=info.width)
+    spec = make_decode_spec(info)
     fs = FrameStream(ff, path, spec, 0, "none")
     want = set(frames)
     out = {}
@@ -387,6 +387,37 @@ def main() -> int:
         pump(app, 0.3)
         check(pv.filling_name() is None and "Stopped caching testsrc.mp4." in d2.log.toPlainText(), "stop caching")
         cp.free_btn.click()
+
+        print("[10] decode resolution (Original / 75 / 50 / 25 %)")
+        from PySide6.QtWidgets import QMessageBox
+        cv2 = d2.canvas
+        d2.controller.seek(30)
+        pump(app, 5, lambda: cv2._image_frame == 30)
+        texts = [cp.res_combo.itemText(i) for i in range(cp.res_combo.count())]
+        check(texts == ["Original (1280x720)", "75% (960x540)", "50% (640x360)", "25% (320x180)"], f"combo {texts}")
+        check(pv.spec.out_w == 1280 and cv2._image.width() == 1280, "default decodes at original size")
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(50))
+        check((pv.spec.out_w, pv.spec.out_h) == (640, 360), f"50% -> decode {pv.spec.out_w}x{pv.spec.out_h}")
+        check(pump(app, 5, lambda: cv2._image is not None and cv2._image_frame == 30 and cv2._image.width() == 640),
+              "frame 30 shown at 640x360")
+        check(d2.controller.frame() == 30 and len(d2.doc.strokes_at(30)) == 1, "stays on frame 30, drawing kept")
+        check(d2.settings.get("draw/decode_scale", 0, int) == 50, "resolution saved to settings")
+        # 전체 캐시가 있으면 물어본다: No → 그대로, Yes → 해제 후 변경
+        cp.cache_btn.click()
+        pump(app, 30, lambda: pv.filling_name() is None)
+        orig_q = QMessageBox.question
+        try:
+            QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.No)
+            cp.res_combo.setCurrentIndex(cp.res_combo.findData(25))
+            check(cp.scale() == 50 and pv.spec.out_w == 640 and pv.pinned_complete(), "No keeps 50% and the cache")
+            QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+            cp.res_combo.setCurrentIndex(cp.res_combo.findData(25))
+            check(pv.spec.out_w == 320 and pv.pinned_total() == (0, 0), "Yes frees cache and switches to 25%")
+        finally:
+            QMessageBox.question = orig_q
+        check(pump(app, 5, lambda: cv2._image is not None and cv2._image.width() == 320), "frame shown at 320x180")
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(100))
+        check(pump(app, 5, lambda: cv2._image is not None and cv2._image.width() == 1280), "back to original")
         w2.close()
         pump(app, 0.5)
     finally:

@@ -31,16 +31,37 @@ from ....core.models import MediaInfo
 _HW_HINTS = ("hwaccel", "d3d11", "dxva", "cuda", "qsv", "nvdec", "vulkan", "device")
 
 
+def _image_alloc(spec: DecodeSpec) -> Callable[[], tuple[QImage, memoryview]] | None:
+    """파이프에서 QImage 메모리로 바로 읽는 할당자. 행 끝에 패딩이 생기는 폭(w*3 이 4 의 배수가 아님)이면 None."""
+    w, h = spec.out_w, spec.out_h
+    if (w * 3) % 4:
+        return None
+
+    def alloc() -> tuple[QImage, memoryview]:
+        img = QImage(w, h, QImage.Format.Format_RGB888)
+        return img, memoryview(img.bits())
+    return alloc
+
+
+def to_image(data, spec: DecodeSpec) -> QImage:
+    """read_frame 결과 → QImage (할당자를 썼으면 이미 QImage)."""
+    if isinstance(data, QImage):
+        return data
+    w, h = spec.out_w, spec.out_h
+    return QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+
+
 def open_stream(ffmpeg: Path, path: Path, spec: DecodeSpec, start: int, hwaccel: str, legacy_vsync: bool,
                 alive: Callable[[], bool], on_info: Callable[[str], None]
-                ) -> tuple[FrameStream | None, tuple[int, bytes] | None, str, bool, str]:
+                ) -> tuple[FrameStream | None, tuple[int, QImage | bytes] | None, str, bool, str]:
     """스트림을 열고 첫 프레임까지 읽는다. hwaccel · -fps_mode 실패 시 한 번씩 폴백 (4.1).
 
     (stream, 첫 프레임, 폴백 뒤 hwaccel, 폴백 뒤 legacy_vsync, 오류 메시지) 를 돌려준다.
-    stream 이 None 이고 오류가 "" 이면 정상 EOF (끝을 넘는 요청).
+    stream 이 None 이고 오류가 "" 이면 정상 EOF (끝을 넘는 요청). 프레임 데이터는 to_image 로 QImage 로 만든다.
     """
+    alloc = _image_alloc(spec)
     for _attempt in range(3):
-        stream = FrameStream(ffmpeg, path, spec, start, hwaccel, legacy_vsync)
+        stream = FrameStream(ffmpeg, path, spec, start, hwaccel, legacy_vsync, alloc)
         got = stream.read_frame()
         if got is not None or not alive():
             return stream, got, hwaccel, legacy_vsync, ""
@@ -107,6 +128,7 @@ class FrameProvider(QThread):
         self._job_gen = -1
         self._job_next = 0
         self._job_end = 0
+        self._stream_next = -1                     # 재생 스트림이 다음에 낼 프레임 (재생 중이 아니면 -1)
         # 전체 캐시
         self._key: tuple | None = None
         self._pinned: dict[tuple, _Pinned] = {}
@@ -124,7 +146,9 @@ class FrameProvider(QThread):
         spec = self._spec
         return self._budget // spec.frame_bytes if spec and spec.frame_bytes else 0
 
-    def set_video(self, path: Path | None, info: MediaInfo | None, hwaccel: str) -> int:
+    def set_video(self, path: Path | None, info: MediaInfo | None, hwaccel: str,
+                  scale: int = C.DRAW_DECODE_SCALE_DEFAULT) -> int:
+        """scale: 디코드 해상도 (원본의 %). 전체 캐시는 (경로, 디코드 크기) 별이라 해상도마다 따로다."""
         with self._cv:
             self._video_gen += 1
             self._req_gen += 1
@@ -136,7 +160,7 @@ class FrameProvider(QThread):
                 self._path, self._spec, self._key = None, None, None
             else:
                 self._path = Path(path)
-                self._spec = make_decode_spec(info)
+                self._spec = make_decode_spec(info, scale)
                 self._hwaccel = hwaccel
                 self._key = (str(self._path), self._spec.out_w, self._spec.out_h)
             # 전체 캐시는 영상을 바꿔도 남는다 — 돌아오면 바로 쓴다
@@ -157,6 +181,8 @@ class FrameProvider(QThread):
             return img
 
     def request_frame(self, frame: int) -> None:
+        with self._cv:
+            self._display_frame = frame    # LRU 가 지금 보는 자리 앞쪽을 밀어내지 않게
         img = self.cached(frame)
         if img is not None:
             self.frame_ready.emit(self._video_gen, frame, img)
@@ -275,6 +301,7 @@ class FrameProvider(QThread):
         with self._cv:
             self._req = req
             self._req_gen += 1
+            self._stream_next = -1     # 돌던 스트림은 끊긴다 (새 스트림이면 첫 프레임에서 다시 정해진다)
             self._cv.notify_all()
 
     def _has(self, f: int) -> bool:
@@ -297,6 +324,7 @@ class FrameProvider(QThread):
             if not (self._job_next <= need <= self._job_next + C.DRAW_PREFETCH_FORWARD):
                 return False
             self._job_end = max(self._job_end, frame + C.DRAW_PREFETCH_FORWARD)
+            self._cv.notify_all()      # 세워 둔 스트림을 깨운다
             return True
 
     def _put(self, idx: int, img: QImage, frame_bytes: int) -> None:
@@ -308,9 +336,26 @@ class FrameProvider(QThread):
                 return
             self._cache[idx] = img
             self._cache_bytes += frame_bytes
+            # 재생 창 [표시 프레임, 표시 + play_ahead] 은 밀어내지 않는다. 큰 프레임(4K 원본)은 LRU 에 몇십 장만
+            # 들어가서, 그냥 오래된 순으로 빼면 곧 보여줄 프레임이 지워지고 재생이 그 자리에서 멈춘다
+            lo = self._display_frame
+            hi = lo + self._play_ahead() + 1
             while self._cache_bytes > self._budget and len(self._cache) > 1:
-                self._cache.popitem(last=False)
+                victim = next((k for k in self._cache if not lo <= k <= hi), None)
+                if victim is None:
+                    self._cache.popitem(last=False)
+                else:
+                    del self._cache[victim]
                 self._cache_bytes -= frame_bytes
+
+    def _play_ahead(self) -> int:
+        """재생 중 디코더가 앞서 가도 되는 프레임 수. 캐시 용량의 1/3 을 넘지 않는다 (큰 프레임 대비)."""
+        return max(4, min(C.DRAW_PLAY_AHEAD, self.cache_capacity() // 3))
+
+    def stream_passed(self, frame: int) -> bool:
+        """재생 스트림이 frame 을 이미 지나갔는데 캐시에 없다 (다시 걸어야 한다)."""
+        with self._cv:
+            return self._stream_next > frame and not self._has(frame)
 
     def _alive(self, gen: int) -> bool:
         return not self._quit and self._req_gen == gen
@@ -349,7 +394,7 @@ class FrameProvider(QThread):
             else:
                 # 재생: 이미 캐시된 앞부분은 건너뛰고 처음 비어 있는 프레임부터 연다
                 start = frame
-                while start < frame + C.DRAW_PLAY_AHEAD and self.cached(start) is not None:
+                while start < frame + self._play_ahead() and self.cached(start) is not None:
                     start += 1
 
             self._decode(ffmpeg, path, spec, kind, frame, start, gen, vgen)
@@ -368,7 +413,6 @@ class FrameProvider(QThread):
                 if kind == "stream":
                     self.stream_ended.emit(vgen)
             return
-        w, h = spec.out_w, spec.out_h
         if kind == "seek":
             with self._cv:
                 self._job_gen, self._job_next, self._job_end = gen, start, frame + C.DRAW_PREFETCH_FORWARD
@@ -387,26 +431,31 @@ class FrameProvider(QThread):
                 idx, data = got
                 img = self.cached(idx)
                 if img is None:
-                    img = QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+                    img = to_image(data, spec)
                     self._put(idx, img, spec.frame_bytes)
                 self.frame_ready.emit(vgen, idx, img)
                 if kind == "seek":
                     with self._cv:
                         self._job_next = idx + 1
-                        end = self._job_end
-                    if idx >= end or self._range_cached(idx + 1, end):
-                        return
+                        # 목표까지 채웠으면 닫지 않고 세워 둔다 (ffmpeg 는 파이프가 차서 멈춘다). 앞으로 넘기면
+                        # _extend_job 이 목표를 늘려 그대로 이어 읽는다 — 다시 열면 키프레임부터 다시 디코드해야 한다
+                        while self._alive(gen) and (idx >= self._job_end
+                                                    or all(self._has(f) for f in range(idx + 1, self._job_end + 1))):
+                            self._cv.wait(0.5)
                 if kind == "stream":
                     # 표시 프레임보다 너무 앞서가지 않는다 (캐시가 재생 중 프레임을 밀어내지 않게)
+                    ahead = self._play_ahead()
                     with self._cv:
-                        while self._alive(gen) and stream.next_index - self._display_frame > C.DRAW_PLAY_AHEAD:
+                        self._stream_next = stream.next_index
+                        while self._alive(gen) and stream.next_index - self._display_frame > ahead:
                             self._cv.wait(0.05)
                 got = stream.read_frame()
         finally:
-            if kind == "seek":
-                with self._cv:
-                    if self._job_gen == gen:
-                        self._job_gen = -1
+            with self._cv:
+                if kind == "seek" and self._job_gen == gen:
+                    self._job_gen = -1
+                if kind == "stream" and self._req_gen == gen:
+                    self._stream_next = -1
             stream.close()
 
     # ================================================================== 전체 캐시 채우기 (별도 스레드)
@@ -432,7 +481,6 @@ class FrameProvider(QThread):
             finish(False, "ffmpeg is not available.")
             return
         total = b - a + 1
-        w, h = spec.out_w, spec.out_h
         t0 = time.monotonic()
         last_emit = 0.0
         with self._cv:
@@ -462,7 +510,7 @@ class FrameProvider(QThread):
                     with self._cv:
                         have = idx in pin.frames
                     if not have:
-                        img = QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+                        img = to_image(data, spec)
                         with self._cv:
                             if idx not in pin.frames:
                                 pin.frames[idx] = img

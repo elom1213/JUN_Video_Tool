@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """프레임 번호 · 재생 상태 · 재생 클럭의 단일 진실 (PLAN_DRAW_TAB 5.4, 13.1).
 
 재생 클럭은 QElapsedTimer 기준이다. 다음 프레임이 아직 디코드되지 않았으면 클럭을 멈추고 기다린다 —
@@ -13,6 +13,7 @@ import math
 from PySide6.QtCore import QElapsedTimer, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QImage
 
+from ....config import constants as C
 from ....core.models import VideoItem
 from .audio_player import AudioPlayer
 from .frame_provider import FrameProvider
@@ -66,19 +67,21 @@ class PlaybackController(QObject):
         return self._gen
 
     # ================================================================== 영상
-    def set_video(self, item: VideoItem | None, hwaccel: str) -> None:
+    def set_video(self, item: VideoItem | None, hwaccel: str, scale: int = C.DRAW_DECODE_SCALE_DEFAULT,
+                  frame: int = 0) -> None:
+        """scale: 디코드 해상도 (원본의 %). frame: 열 프레임 (해상도를 바꿔 다시 열 때 제자리 유지)."""
         self.pause()
         info = item.info if item is not None else None
         self._item = item if info is not None else None
-        self._gen = self.provider.set_video(item.path if self._item else None, info, hwaccel)
-        self._frame = 0
+        self._gen = self.provider.set_video(item.path if self._item else None, info, hwaccel, scale)
         self._fps = info.fps if info else 0.0
         self._last = info.last_frame if info else 0
+        self._frame = max(0, min(int(frame), self._last))
         self.video_changed.emit(self._item)
-        self.frame_changed.emit(0)
+        self.frame_changed.emit(self._frame)
         if self._item is not None:
             self.loading_changed.emit(True)
-            self.provider.request_frame(0)
+            self.provider.request_frame(self._frame)
 
     # ================================================================== 재생
     def play(self) -> None:
@@ -168,6 +171,9 @@ class PlaybackController(QObject):
         if img is None:
             # 다음 프레임이 아직 없다 → 클럭과 소리를 멈추고 frame_ready 를 기다린다
             self._waiting = True
+            if self.provider.stream_passed(nxt):
+                # 스트림은 이미 지나갔는데 캐시에서 빠졌다 → 기다려도 안 온다. 그 자리에서 다시 건다
+                self.provider.start_stream(nxt)
             if self.audio is not None:
                 self.audio.suspend()
             self.loading_changed.emit(True)

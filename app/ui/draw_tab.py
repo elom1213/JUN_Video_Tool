@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QGroup
 from ..config import constants as C
 from ..config.settings import AppSettings
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
+from ..core.frame_decoder import normalize_scale
 from ..core.memory_info import format_gib, full_cache_budget, plan_cache_range, reserve_bytes, system_memory
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
@@ -70,6 +71,7 @@ class DrawTab(QWidget):
         self._scrub_base = 0
         self._last_error = ""
         self._reverting = False
+        self._decode_scale = C.DRAW_DECODE_SCALE_DEFAULT   # 디코드 해상도 (원본의 %)
 
         self._build_actions()
         self._build_ui()
@@ -286,6 +288,7 @@ class DrawTab(QWidget):
         p.cache_changed.connect(self._refresh_cache_ui)
         self.cache_panel.cache_clicked.connect(self.cache_whole_video)
         self.cache_panel.free_clicked.connect(self.free_all_cache)
+        self.cache_panel.scale_changed.connect(self.set_decode_scale)
 
         cv = self.canvas
         cv.stroke_finished.connect(self._stroke_finished)
@@ -385,6 +388,9 @@ class DrawTab(QWidget):
         self.audio.set_volume(volume)
         self.audio.set_muted(muted)
         self.autosave_check.setChecked(bool(s.get("draw/autosave", False, bool)))
+        # 영상이 아직 안 열렸을 때 불린다 — 이후 여는 영상부터 이 해상도로 디코드한다
+        self._decode_scale = normalize_scale(s.get("draw/decode_scale", C.DRAW_DECODE_SCALE_DEFAULT, int))
+        self.cache_panel.set_scale(self._decode_scale)
 
     def save_settings(self) -> None:
         s = self.settings
@@ -404,6 +410,7 @@ class DrawTab(QWidget):
         s.set("draw/volume", self.transport.volume.value())
         s.set("draw/muted", self.transport.btn_mute.isChecked())
         s.set("draw/autosave", self.autosave_check.isChecked())
+        s.set("draw/decode_scale", self._decode_scale)
 
     def _update_actions(self) -> None:
         a = self._active
@@ -549,6 +556,7 @@ class DrawTab(QWidget):
         self.canvas.clear("Select a video to start drawing.")
         self.transport.set_markers([])
         self.transport.set_has_audio(False)
+        self.cache_panel.set_source_size(0, 0)
         self._refresh_cache_ui()
         self._update_actions()
         self.title_changed.emit()
@@ -564,8 +572,9 @@ class DrawTab(QWidget):
         info = item.info
         self._row = row
         self._last_error = ""
-        self.controller.set_video(item, self.settings.hwaccel)
+        self.controller.set_video(item, self.settings.hwaccel, self._decode_scale)
         self.canvas.set_source_size(info.width, info.height)
+        self.cache_panel.set_source_size(info.width, info.height)
         self.transport.set_range(self.controller.last_frame())
         self.transport.set_has_audio(info.has_audio)
         self._doc_path = None
@@ -642,6 +651,46 @@ class DrawTab(QWidget):
         if p.start_full_cache(start, end, reserve, whole):
             self.cache_panel.set_progress(0, end - start + 1)
         self._refresh_cache_ui()
+
+    def set_decode_scale(self, scale: int) -> None:
+        """디코드 해상도를 바꾸고 지금 영상을 같은 프레임에서 다시 연다.
+
+        이전 해상도로 올려 둔 전체 캐시는 새 해상도에서 못 쓰므로, 있으면 물어보고 해제한다.
+        """
+        scale = normalize_scale(scale)
+        if scale == self._decode_scale:
+            return
+        p = self.provider
+        total, _ = p.pinned_total()
+        if total > 0 or p.filling_name() is not None:
+            ans = QMessageBox.question(
+                self, "Change Resolution",
+                f"Cached frames were decoded at the current resolution and cannot be reused.\n"
+                f"Changing the resolution frees them ({format_gib(total)}). Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if ans != QMessageBox.StandardButton.Yes:
+                self.cache_panel.set_scale(self._decode_scale)
+                return
+            self.free_all_cache()
+        self._decode_scale = scale
+        self.settings.set("draw/decode_scale", scale)
+        self.cache_panel.set_scale(scale)
+        item = self.controller.item()
+        if item is None or item.info is None:
+            self._refresh_cache_ui()
+            return
+        frame, playing = self.controller.frame(), self.controller.is_playing()
+        self.controller.set_video(item, self.settings.hwaccel, scale, frame)
+        self.transport.set_range(self.controller.last_frame())
+        spec = p.spec
+        if spec is not None:
+            self.log.append(f"Decoding at {spec.out_w}x{spec.out_h} ({spec.frame_bytes / 2 ** 20:.1f} MB per frame). "
+                            f"Cache holds about {p.cache_capacity()} frames; the whole video needs "
+                            f"{format_gib(item.info.frame_count * spec.frame_bytes)}.")
+        if playing:
+            self.controller.play()
+        self._refresh_cache_ui()
+        self.canvas.setFocus()
 
     def free_all_cache(self) -> None:
         freed = self.provider.free_all_cache()

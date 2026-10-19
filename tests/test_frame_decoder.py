@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from app.core.frame_decoder import build_audio_command, build_stream_command, make_decode_spec, seek_time
+from app.core.frame_decoder import (build_audio_command, build_stream_command, make_decode_spec, normalize_scale,
+                                    seek_time)
 from app.core.models import MediaInfo
 
 FF = Path("C:/tools/ffmpeg.exe")
@@ -22,12 +23,26 @@ def test_seek_time():
     assert seek_time(5, 0) == 0.0
 
 
-@pytest.mark.parametrize("src,out", [((1920, 1080), (1280, 720)), ((1280, 720), (1280, 720)),
-                                     ((640, 480), (640, 480)), ((1921, 1081), (1280, 720))])
-def test_make_decode_spec(src, out):
-    spec = make_decode_spec(_info(*src))
+@pytest.mark.parametrize("src,scale,out", [
+    ((1920, 1080), 100, (1920, 1080)), ((1920, 1080), 75, (1440, 810)), ((1920, 1080), 50, (960, 540)),
+    ((1920, 1080), 25, (480, 270)), ((3840, 2160), 100, (3840, 2160)), ((3840, 2160), 75, (2880, 1620)),
+    ((1280, 720), 25, (320, 180)), ((1080, 1920), 50, (540, 960)),
+    ((1921, 1081), 100, (1920, 1080)), ((1921, 1081), 75, (1440, 810)), ((6, 6), 25, (2, 2))])
+def test_make_decode_spec(src, scale, out):
+    spec = make_decode_spec(_info(*src), scale)
     assert (spec.out_w, spec.out_h) == out
     assert spec.frame_bytes == out[0] * out[1] * 3
+    assert (spec.src_w, spec.src_h) == src
+
+
+def test_make_decode_spec_default_is_original():
+    assert (make_decode_spec(_info(3840, 2160)).out_w, make_decode_spec(_info(3840, 2160)).out_h) == (3840, 2160)
+
+
+@pytest.mark.parametrize("raw,expect", [(100, 100), (75, 75), ("50", 50), (25, 25), (33, 100), (None, 100),
+                                        ("x", 100)])
+def test_normalize_scale(raw, expect):
+    assert normalize_scale(raw) == expect
 
 
 def test_frame_bytes_720p():
@@ -35,14 +50,14 @@ def test_frame_bytes_720p():
 
 
 def test_build_stream_command():
-    spec = make_decode_spec(_info(1920, 1080))
+    spec = make_decode_spec(_info(1920, 1080), 50)
     cmd = build_stream_command(FF, SRC, spec, 30, "auto")
     assert cmd[0] == str(FF)
     assert cmd.index("-ss") < cmd.index("-i")
     assert cmd[cmd.index("-hwaccel") + 1] == "auto"
     assert "-an" in cmd
     assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
-    assert "scale=1280:720" in cmd[cmd.index("-vf") + 1]
+    assert "scale=960:540" in cmd[cmd.index("-vf") + 1]
     assert cmd[cmd.index("-f") + 1] == "rawvideo"
     assert cmd[-1] == "-"
 

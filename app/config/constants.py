@@ -124,7 +124,9 @@ THUMB_CACHE_SIZE = 500
 # ---------------------------------------------------------------------------
 # Draw 탭 (PLAN_DRAW_TAB 4.3, 13.6)
 # ---------------------------------------------------------------------------
-DRAW_DECODE_MAX_WIDTH = 1280      # 디코드 폭 상한 (px). 소스가 더 작으면 소스 폭
+DRAW_DECODE_SCALES = (100, 75, 50, 25)   # 디코드 해상도 = 원본의 이 % (Draw 탭 Resolution)
+DRAW_DECODE_SCALE_DEFAULT = 100
+DRAW_PIPE_BUFFER_BYTES = 1 << 20  # 디코더 stdout 파이프 버퍼 (Windows 기본 4 KB 는 4K 에서 4 배 느리다)
 DRAW_CACHE_BUDGET_MB = 2048       # 일반(LRU) 프레임 캐시 메모리 상한. 전체 캐시는 따로 잡는다
 # 전체 캐시 (Cache Whole Video): 시스템에 남겨 둘 여유 메모리 = max(최소 GB, 전체 RAM x 비율)
 DRAW_FULL_CACHE_RESERVE_MIN_GB = 4.0
