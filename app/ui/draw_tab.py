@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """Draw 탭 (PLAN_DRAW_TAB 5장, 13장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QGroup
 from ..config import constants as C
 from ..config.settings import AppSettings
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
+from ..core.memory_info import format_gib, full_cache_budget, plan_cache_range, reserve_bytes, system_memory
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
 from ..core.utils import human_size
@@ -26,6 +27,7 @@ from .convert_tab import MEDIA_FILTER
 from .icons import icon
 from .widgets.draw.audio_player import AudioPlayer
 from .widgets.draw.brush_panel import BrushPanel
+from .widgets.draw.cache_panel import CachePanel
 from .widgets.draw.export_dialog import ExportDialog
 from .widgets.draw.frame_provider import FrameProvider
 from .widgets.draw.ghost_panel import GhostPanel
@@ -137,6 +139,8 @@ class DrawTab(QWidget):
                                      icon_text="Save As…")
         self.act_load = self._act("folder", "Load Drawing…", "Ctrl+L", self.load, icon_text="Load…")
         self.act_export = self._act("export", "Export with Drawing…", "Ctrl+E", self.export, icon_text="Export…")
+        self.act_cache_whole = self._act(None, "Cache Whole Video", slot=self.cache_whole_video)
+        self.act_free_cache = self._act(None, "Free All Frame Cache", slot=self.free_all_cache)
 
     def _build_ui(self) -> None:
         # --- 툴바 ---
@@ -202,6 +206,8 @@ class DrawTab(QWidget):
         self.scrub_spin.setSuffix(" px/frame")
         sl.addWidget(self.scrub_spin)
         sv.addWidget(scrub_box)
+        self.cache_panel = CachePanel()
+        sv.addWidget(self.cache_panel)
         brow = QHBoxLayout()
         self.undo_btn = QPushButton(icon("undo"), "Undo")
         self.redo_btn = QPushButton(icon("redo"), "Redo")
@@ -273,6 +279,13 @@ class DrawTab(QWidget):
         self.provider.decode_error.connect(self._decode_error)
         self.provider.info.connect(lambda gen, msg: self.log.append(msg) if gen == c.video_gen() else None)
         self.audio.log.connect(self.log.append)
+        p = self.provider
+        p.fill_progress.connect(lambda name, done, total: self.cache_panel.set_progress(done, total))
+        p.fill_finished.connect(self._fill_finished)
+        p.fill_log.connect(self.log.append)
+        p.cache_changed.connect(self._refresh_cache_ui)
+        self.cache_panel.cache_clicked.connect(self.cache_whole_video)
+        self.cache_panel.free_clicked.connect(self.free_all_cache)
 
         cv = self.canvas
         cv.stroke_finished.connect(self._stroke_finished)
@@ -299,6 +312,7 @@ class DrawTab(QWidget):
                 self.act_tool_draw, self.act_tool_erase, self.act_ghost, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
+                self.act_cache_whole, self.act_free_cache, None,
                 self.act_remove, self.act_clear_list]
 
     def log_panel(self) -> LogPanel:
@@ -418,6 +432,11 @@ class DrawTab(QWidget):
         self.redo_btn.setEnabled(self.act_redo.isEnabled())
         self.clear_frame_btn.setEnabled(self.act_clear_frame.isEnabled())
         self.transport.setEnabled(has_video)
+        filling = self.provider.filling_name()
+        self.act_cache_whole.setEnabled(a and has_video)
+        self.act_cache_whole.setText("Stop Caching" if filling is not None and filling == self._video_name()
+                                     else "Cache Whole Video")
+        self.act_free_cache.setEnabled(a and (self.provider.pinned_total()[0] > 0 or filling is not None))
 
     # ================================================================== 파일 추가 · 제거
     def add_files(self) -> None:
@@ -530,6 +549,7 @@ class DrawTab(QWidget):
         self.canvas.clear("Select a video to start drawing.")
         self.transport.set_markers([])
         self.transport.set_has_audio(False)
+        self._refresh_cache_ui()
         self._update_actions()
         self.title_changed.emit()
 
@@ -556,8 +576,86 @@ class DrawTab(QWidget):
             fps = f"{info.fps:.3f}".rstrip("0").rstrip(".")
             self.log.append(f"{item.path.name} — {info.width}x{info.height}, {fps} fps, "
                             f"{info.frame_count} frames. Decoding at {spec.out_w}x{spec.out_h}. "
-                            f"Cache holds about {self.provider.cache_capacity()} frames.")
+                            f"Cache holds about {self.provider.cache_capacity()} frames; the whole video needs "
+                            f"{format_gib(info.frame_count * spec.frame_bytes)}.")
+        self._refresh_cache_ui()
         self.canvas.setFocus()
+
+    # ================================================================== 프레임 캐시
+    def _video_name(self) -> str | None:
+        item = self.controller.item()
+        return item.path.name if item is not None else None
+
+    def _refresh_cache_ui(self) -> None:
+        p = self.provider
+        name = self._video_name()
+        frames = self.controller.last_frame() + 1 if name is not None else 0
+        cached = p.pinned_frames() if name is not None else 0
+        complete = p.pinned_complete() if name is not None else False
+        total, videos = p.pinned_total()
+        need_text = None
+        spec = p.spec
+        if name is not None and spec is not None and not complete:
+            need_text = f"Needs {format_gib(max(0, frames - cached) * spec.frame_bytes)}"
+            mem = system_memory()
+            if mem is not None:
+                need_text += f" · {format_gib(full_cache_budget(mem))} usable"
+        self.cache_panel.set_state(name, cached, frames, complete, p.filling_name(), total, videos, need_text)
+        self.transport.set_cached_ranges(p.pinned_ranges() if name is not None else [])
+        self._update_actions()
+
+    def cache_whole_video(self) -> None:
+        """지금 영상 전 구간을 메모리에 올린다 (채우는 중이면 멈춘다). 다 안 들어가면 현재 프레임 주변만."""
+        item = self.controller.item()
+        p = self.provider
+        spec = p.spec
+        if item is None or spec is None:
+            return
+        if p.filling_name() == item.path.name:
+            p.cancel_full_cache()
+            return
+        if p.pinned_complete():
+            self.log.append(f"{item.path.name} is already fully cached.")
+            return
+        frames = self.controller.last_frame() + 1
+        mem = system_memory()
+        if mem is None:
+            budget, reserve = frames * spec.frame_bytes, 0     # 메모리를 못 읽으면 검사 없이 전부
+        else:
+            budget, reserve = full_cache_budget(mem), reserve_bytes(mem.total)
+        start, end = plan_cache_range(frames, spec.frame_bytes, self.controller.frame(), budget, p.pinned_frames())
+        if end < start:
+            free = format_gib(mem.available) if mem is not None else "?"
+            self.log.append_error(f"Not enough free memory to cache {item.path.name} ({free} free, "
+                                  f"{format_gib(reserve)} is kept for the system). "
+                                  f"Free some cache or close other apps.")
+            return
+        whole = start == 0 and end == frames - 1
+        if whole:
+            free = f" ({format_gib(mem.available)} free)" if mem is not None else ""
+            self.log.append(f"Caching {item.path.name}: {frames} frames, about "
+                            f"{format_gib(frames * spec.frame_bytes)}{free}.")
+        else:
+            self.log.append_error(f"Not enough free memory for the whole video "
+                                  f"({format_gib(frames * spec.frame_bytes)} needed, {format_gib(budget)} usable). "
+                                  f"Caching frames {start}-{end} around the current frame.")
+        if p.start_full_cache(start, end, reserve, whole):
+            self.cache_panel.set_progress(0, end - start + 1)
+        self._refresh_cache_ui()
+
+    def free_all_cache(self) -> None:
+        freed = self.provider.free_all_cache()
+        self.log.append(f"Freed {format_gib(freed)} of frame cache.")
+        self._refresh_cache_ui()
+
+    def _fill_finished(self, name: str, ok: bool, msg: str) -> None:
+        if ok:
+            self.log.append_ok(msg)
+        elif msg.startswith("Stopped caching") and "memory" not in msg:
+            self.log.append(msg)
+        else:
+            self.log.append_error(msg)
+        self._refresh_cache_ui()
 
     def _new_document(self, item: VideoItem) -> DrawingDocument:
         info = item.info

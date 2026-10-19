@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """Draw 탭 통합 검증 (PLAN_DRAW_TAB 9.2, 12장, 13.8). 오프스크린 Qt 로 실제 위젯을 돌린다.
 
     python dev/check_draw.py [--keep]
@@ -361,6 +361,32 @@ def main() -> int:
                 srcp = pixel(frames_src[f], 600, 360)
                 check(not (o[0] > 180 and o[1] < 90 and o[2] < 90 and not (srcp[0] > 180 and srcp[1] < 90)),
                       f"{name}: frame {f} has no stroke {o}")
+
+        print("[9] frame cache (Cache Whole Video / Free All Cache)")
+        pv, cp = d2.provider, d2.cache_panel
+        cp.cache_btn.click()
+        check(pv.filling_name() == "testsrc.mp4" and cp.cache_btn.text() == "Stop Caching", "caching started")
+        check(pump(app, 60, lambda: pv.filling_name() is None), "caching finished")
+        pump(app, 0.2)
+        check(pv.pinned_complete() and pv.pinned_frames() == 300, f"all frames pinned ({pv.pinned_frames()})")
+        check(all(pv.cached(f) is not None for f in range(300)), "every frame is a cache hit")
+        check("all 300 frames cached" in cp.video_label.text(), f"panel: {cp.video_label.text()}")
+        check(d2.transport.slider._cached == [(0, 299)], f"timeline cached range {d2.transport.slider._cached[:3]}")
+        check("Cached testsrc.mp4: 300 frames" in d2.log.toPlainText(), "cache log line")
+        img = pv.cached(30)
+        check(img is not None and md5(qimage_bytes(img)) == ref[30], "pinned frame 30 == sequential frame 30")
+        d2.controller.set_video(item, "none")
+        check(pv.pinned_complete(), "pinned cache survives reloading the video")
+        nbytes, nvid = pv.pinned_total()
+        cp.free_btn.click()
+        pump(app, 0.2)
+        check(pv.pinned_total() == (0, 0) and pv.pinned_frames() == 0, f"free all cache ({nbytes >> 20} MB, {nvid} video)")
+        check(cp.total_label.text() == "In memory: none" and d2.transport.slider._cached == [], "panel cleared")
+        cp.cache_btn.click()
+        cp.cache_btn.click()
+        pump(app, 0.3)
+        check(pv.filling_name() is None and "Stopped caching testsrc.mp4." in d2.log.toPlainText(), "stop caching")
+        cp.free_btn.click()
         w2.close()
         pump(app, 0.5)
     finally:

@@ -1,16 +1,23 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
-"""디코더 스레드 + LRU 프레임 캐시 (PLAN_DRAW_TAB 5.3).
+# last Update date : 2026-10-19
+"""디코더 스레드 + LRU 프레임 캐시 (PLAN_DRAW_TAB 5.3) + 전체 캐시 (Cache Whole Video).
 
 UI 스레드는 request_frame / start_stream / stop_stream / set_display_frame 만 부른다.
 요청마다 request_gen 이 올라가므로 진행 중 디코드는 즉시 끊기고 최신 요청 하나만 좇는다 (스크럽 대응).
+단, 이미 돌고 있는 앞쪽 prefetch 가 곧 닿을 프레임이면 끊지 않고 목표만 늘린다 — 끊으면 ffmpeg 를 다시 띄워
+키프레임부터 다시 디코드해야 해서, 한 프레임씩 넘길 때 화면이 잠깐 멈추는 원인이 된다.
+
+전체 캐시는 영상별 저장소(_Pinned)에 담기고, 영상을 바꿔도 남는다 (free_all_cache 로만 비운다).
+채우기는 별도 스레드 · 별도 ffmpeg 가 하므로 그 동안에도 프레임 이동 · 그리기가 된다.
 """
 from __future__ import annotations
 
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
@@ -18,9 +25,56 @@ from PySide6.QtGui import QImage
 from ....config import constants as C
 from ....core import ffmpeg_locator
 from ....core.frame_decoder import DecodeSpec, FrameStream, make_decode_spec
+from ....core.memory_info import format_gib, system_memory
 from ....core.models import MediaInfo
 
 _HW_HINTS = ("hwaccel", "d3d11", "dxva", "cuda", "qsv", "nvdec", "vulkan", "device")
+
+
+def open_stream(ffmpeg: Path, path: Path, spec: DecodeSpec, start: int, hwaccel: str, legacy_vsync: bool,
+                alive: Callable[[], bool], on_info: Callable[[str], None]
+                ) -> tuple[FrameStream | None, tuple[int, bytes] | None, str, bool, str]:
+    """스트림을 열고 첫 프레임까지 읽는다. hwaccel · -fps_mode 실패 시 한 번씩 폴백 (4.1).
+
+    (stream, 첫 프레임, 폴백 뒤 hwaccel, 폴백 뒤 legacy_vsync, 오류 메시지) 를 돌려준다.
+    stream 이 None 이고 오류가 "" 이면 정상 EOF (끝을 넘는 요청).
+    """
+    for _attempt in range(3):
+        stream = FrameStream(ffmpeg, path, spec, start, hwaccel, legacy_vsync)
+        got = stream.read_frame()
+        if got is not None or not alive():
+            return stream, got, hwaccel, legacy_vsync, ""
+        stream.close()
+        code = stream.returncode()
+        err = stream.stderr_tail()
+        if code in (0, None):
+            return None, None, hwaccel, legacy_vsync, ""
+        if "fps_mode" in err and not legacy_vsync:
+            legacy_vsync = True
+            on_info("ffmpeg does not support -fps_mode; retrying with -vsync 0.")
+            continue
+        if hwaccel == "auto":
+            hwaccel = "none"
+            low = err.lower()
+            hint = "hardware decode failed" if any(h in low for h in _HW_HINTS) else "decode failed"
+            on_info(f"{hint.capitalize()}; retrying without hardware acceleration.")
+            continue
+        return None, None, hwaccel, legacy_vsync, err.splitlines()[-1] if err else f"ffmpeg exited with code {code}."
+    return None, None, hwaccel, legacy_vsync, ""
+
+
+class _Pinned:
+    """전체 캐시 한 영상분. frames 는 provider 의 _cv 아래에서만 고친다."""
+
+    def __init__(self, name: str, frame_bytes: int) -> None:
+        self.name = name
+        self.frame_bytes = frame_bytes
+        self.frames: dict[int, QImage] = {}
+        self.complete = False          # 0 번부터 영상 끝까지 빈틈없이 올라가 있다
+
+    @property
+    def nbytes(self) -> int:
+        return len(self.frames) * self.frame_bytes
 
 
 class FrameProvider(QThread):
@@ -29,6 +83,10 @@ class FrameProvider(QThread):
     eof_reached = Signal(int, int)             # video_gen, EOF 직전까지 읽은 프레임 수 (= 실제 frame_count 상한)
     decode_error = Signal(int, str)            # video_gen, message
     info = Signal(int, str)                    # video_gen, 로그용 안내 (hwaccel 폴백 등)
+    fill_progress = Signal(str, int, int)      # 영상 이름, 범위 안에서 캐시된 프레임 수, 범위 프레임 수
+    fill_finished = Signal(str, bool, str)     # 영상 이름, 범위를 다 채웠나, 로그 메시지
+    fill_log = Signal(str)                     # 채우기 중 안내 (폴백 등)
+    cache_changed = Signal()                   # 전체 캐시 메모리가 바뀜 (채우는 중엔 진행 간격으로)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -45,6 +103,17 @@ class FrameProvider(QThread):
         self._cache: OrderedDict[int, QImage] = OrderedDict()
         self._cache_bytes = 0
         self._budget = C.DRAW_CACHE_BUDGET_MB * 2 ** 20
+        # 진행 중인 seek prefetch (끊지 않고 늘리기 위해 run 스레드가 갱신)
+        self._job_gen = -1
+        self._job_next = 0
+        self._job_end = 0
+        # 전체 캐시
+        self._key: tuple | None = None
+        self._pinned: dict[tuple, _Pinned] = {}
+        self._pin: _Pinned | None = None           # 지금 영상의 전체 캐시 (없으면 None)
+        self._fill_token = 0
+        self._fill_name: str | None = None         # 채우는 중인 영상 이름 (없으면 None)
+        self._fill_thread: threading.Thread | None = None
 
     # ================================================================== UI 스레드 API
     @property
@@ -64,16 +133,24 @@ class FrameProvider(QThread):
             self._cache_bytes = 0
             self._display_frame = 0
             if path is None or info is None:
-                self._path, self._spec = None, None
+                self._path, self._spec, self._key = None, None, None
             else:
                 self._path = Path(path)
                 self._spec = make_decode_spec(info)
                 self._hwaccel = hwaccel
+                self._key = (str(self._path), self._spec.out_w, self._spec.out_h)
+            # 전체 캐시는 영상을 바꿔도 남는다 — 돌아오면 바로 쓴다
+            self._pin = self._pinned.get(self._key) if self._key is not None else None
             self._cv.notify_all()
             return self._video_gen
 
     def cached(self, frame: int) -> QImage | None:
         with self._cv:
+            pin = self._pin
+            if pin is not None:
+                img = pin.frames.get(frame)
+                if img is not None:
+                    return img
             img = self._cache.get(frame)
             if img is not None:
                 self._cache.move_to_end(frame)
@@ -86,6 +163,8 @@ class FrameProvider(QThread):
             # 캐시 히트여도 앞쪽 prefetch 가 비었으면 채워 둔다 (→ 연타 대응)
             if self._range_cached(frame, frame + C.DRAW_PREFETCH_FORWARD // 2):
                 return
+        if self._extend_job(frame, img is not None):
+            return
         self._post(("seek", frame))
 
     def start_stream(self, from_frame: int) -> None:
@@ -107,8 +186,89 @@ class FrameProvider(QThread):
         with self._cv:
             self._quit = True
             self._req_gen += 1
+            self._fill_token += 1
+            self._fill_name = None
             self._cv.notify_all()
+            th = self._fill_thread
         self.wait(2000)
+        if th is not None:
+            th.join(2.0)
+
+    # ------------------------------------------------------------------ 전체 캐시 (UI 스레드)
+    def pinned_frames(self) -> int:
+        """지금 영상의 전체 캐시 프레임 수."""
+        with self._cv:
+            return len(self._pin.frames) if self._pin is not None else 0
+
+    def pinned_complete(self) -> bool:
+        with self._cv:
+            return self._pin is not None and self._pin.complete
+
+    def pinned_total(self) -> tuple[int, int]:
+        """(모든 영상의 전체 캐시 bytes, 영상 수)."""
+        with self._cv:
+            stores = [p for p in self._pinned.values() if p.frames]
+            return sum(p.nbytes for p in stores), len(stores)
+
+    def pinned_ranges(self) -> list[tuple[int, int]]:
+        """지금 영상에서 전체 캐시된 연속 구간들 [(a, b), ...] (b 포함)."""
+        with self._cv:
+            keys = sorted(self._pin.frames) if self._pin is not None else []
+        out: list[tuple[int, int]] = []
+        for k in keys:
+            if out and k == out[-1][1] + 1:
+                out[-1] = (out[-1][0], k)
+            else:
+                out.append((k, k))
+        return out
+
+    def filling_name(self) -> str | None:
+        with self._cv:
+            return self._fill_name
+
+    def start_full_cache(self, start: int, end: int, reserve: int, whole: bool) -> bool:
+        """지금 영상의 [start, end] 를 전체 캐시로 채우기 시작한다. 다른 채우기가 돌고 있으면 그것은 멈춘다.
+
+        whole: [start, end] 가 영상 전체(0 ~ 마지막 프레임)다. 채우는 동안 남은 메모리가 reserve 아래로 내려가면 멈춘다.
+        """
+        self.cancel_full_cache()
+        with self._cv:
+            if self._path is None or self._spec is None or self._key is None or end < start:
+                return False
+            pin = self._pinned.get(self._key)
+            if pin is None:
+                pin = self._pinned[self._key] = _Pinned(self._path.name, self._spec.frame_bytes)
+            self._pin = pin
+            self._fill_token += 1
+            token = self._fill_token
+            self._fill_name = pin.name
+            args = (token, pin, self._path, self._spec, int(start), int(end), self._hwaccel, self._legacy_vsync,
+                    int(reserve), bool(whole), self._key)
+            th = self._fill_thread = threading.Thread(target=self._fill, args=args, daemon=True)
+        th.start()
+        return True
+
+    def cancel_full_cache(self) -> None:
+        """채우기를 멈춘다. 이미 올라간 프레임은 남는다."""
+        with self._cv:
+            self._fill_token += 1
+            name, self._fill_name = self._fill_name, None
+        if name is not None:
+            self.fill_finished.emit(name, False, f"Stopped caching {name}.")
+            self.cache_changed.emit()
+
+    def free_all_cache(self) -> int:
+        """전체 캐시(모든 영상) + LRU 캐시를 비운다. 해제한 bytes 를 돌려준다."""
+        self.cancel_full_cache()
+        with self._cv:
+            freed = sum(p.nbytes for p in self._pinned.values()) + self._cache_bytes
+            self._pinned.clear()
+            self._pin = None
+            self._cache.clear()
+            self._cache_bytes = 0
+            # 진행 중 디코드(재생 스트림 포함)는 끊지 않는다 — LRU 는 다시 채워져도 상한이 있다
+        self.cache_changed.emit()
+        return freed
 
     # ================================================================== 내부
     def _post(self, req: tuple[str, int]) -> None:
@@ -117,12 +277,32 @@ class FrameProvider(QThread):
             self._req_gen += 1
             self._cv.notify_all()
 
+    def _has(self, f: int) -> bool:
+        """_cv 를 잡은 채로 부른다."""
+        return f in self._cache or (self._pin is not None and f in self._pin.frames)
+
     def _range_cached(self, a: int, b: int) -> bool:
         with self._cv:
-            return all(f in self._cache for f in range(max(0, a), b + 1))
+            return all(self._has(f) for f in range(max(0, a), b + 1))
+
+    def _extend_job(self, frame: int, have_frame: bool) -> bool:
+        """돌고 있는 seek prefetch 가 곧 닿을 자리면 끊지 않고 목표만 늘린다. 늘렸으면 True."""
+        with self._cv:
+            if self._job_gen != self._req_gen or self._req is not None:
+                return False
+            need = frame
+            if have_frame:
+                while need <= frame + C.DRAW_PREFETCH_FORWARD and self._has(need):
+                    need += 1
+            if not (self._job_next <= need <= self._job_next + C.DRAW_PREFETCH_FORWARD):
+                return False
+            self._job_end = max(self._job_end, frame + C.DRAW_PREFETCH_FORWARD)
+            return True
 
     def _put(self, idx: int, img: QImage, frame_bytes: int) -> None:
         with self._cv:
+            if self._pin is not None and idx in self._pin.frames:
+                return
             if idx in self._cache:
                 self._cache.move_to_end(idx)
                 return
@@ -174,43 +354,24 @@ class FrameProvider(QThread):
 
             self._decode(ffmpeg, path, spec, kind, frame, start, gen, vgen)
 
-    def _open(self, ffmpeg: Path, path: Path, spec: DecodeSpec, start: int, gen: int,
-              vgen: int) -> tuple[FrameStream | None, tuple[int, bytes] | None]:
-        """스트림을 열고 첫 프레임까지 읽는다. hwaccel · -fps_mode 실패 시 한 번씩 폴백 (4.1)."""
-        for _attempt in range(3):
-            stream = FrameStream(ffmpeg, path, spec, start, self._hwaccel, self._legacy_vsync)
-            got = stream.read_frame()
-            if got is not None or not self._alive(gen):
-                return stream, got
-            stream.close()
-            code = stream.returncode()
-            err = stream.stderr_tail()
-            if code in (0, None):
-                return None, None          # 정상 EOF (끝을 넘는 요청)
-            if "fps_mode" in err and not self._legacy_vsync:
-                self._legacy_vsync = True
-                self.info.emit(vgen, "ffmpeg does not support -fps_mode; retrying with -vsync 0.")
-                continue
-            if self._hwaccel == "auto":
-                self._hwaccel = "none"     # 이후 이 영상은 none 으로 고정 (set_video 에서 다시 정해진다)
-                low = err.lower()
-                hint = "hardware decode failed" if any(h in low for h in _HW_HINTS) else "decode failed"
-                self.info.emit(vgen, f"{hint.capitalize()}; retrying without hardware acceleration.")
-                continue
-            self.decode_error.emit(vgen, err.splitlines()[-1] if err else f"ffmpeg exited with code {code}.")
-            return None, None
-        return None, None
-
     def _decode(self, ffmpeg: Path, path: Path, spec: DecodeSpec, kind: str, frame: int, start: int, gen: int,
                 vgen: int) -> None:
-        stream, got = self._open(ffmpeg, path, spec, start, gen, vgen)
+        # hwaccel 폴백은 이후 이 영상 내내 유지된다 (set_video 에서 다시 정해진다)
+        stream, got, self._hwaccel, self._legacy_vsync, err = open_stream(
+            ffmpeg, path, spec, start, self._hwaccel, self._legacy_vsync, lambda: self._alive(gen),
+            lambda msg: self.info.emit(vgen, msg))
         if stream is None:
-            if self._alive(gen):
+            if err:
+                self.decode_error.emit(vgen, err)
+            elif self._alive(gen):
                 self.eof_reached.emit(vgen, start)
                 if kind == "stream":
                     self.stream_ended.emit(vgen)
             return
         w, h = spec.out_w, spec.out_h
+        if kind == "seek":
+            with self._cv:
+                self._job_gen, self._job_next, self._job_end = gen, start, frame + C.DRAW_PREFETCH_FORWARD
         try:
             while self._alive(gen):
                 if got is None:
@@ -224,12 +385,17 @@ class FrameProvider(QThread):
                             self.stream_ended.emit(vgen)
                     return
                 idx, data = got
-                img = QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
-                self._put(idx, img, spec.frame_bytes)
+                img = self.cached(idx)
+                if img is None:
+                    img = QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+                    self._put(idx, img, spec.frame_bytes)
                 self.frame_ready.emit(vgen, idx, img)
-                if kind == "seek" and (idx >= frame + C.DRAW_PREFETCH_FORWARD
-                                       or (idx >= frame and self._range_cached(frame, frame + C.DRAW_PREFETCH_FORWARD))):
-                    return
+                if kind == "seek":
+                    with self._cv:
+                        self._job_next = idx + 1
+                        end = self._job_end
+                    if idx >= end or self._range_cached(idx + 1, end):
+                        return
                 if kind == "stream":
                     # 표시 프레임보다 너무 앞서가지 않는다 (캐시가 재생 중 프레임을 밀어내지 않게)
                     with self._cv:
@@ -237,4 +403,103 @@ class FrameProvider(QThread):
                             self._cv.wait(0.05)
                 got = stream.read_frame()
         finally:
+            if kind == "seek":
+                with self._cv:
+                    if self._job_gen == gen:
+                        self._job_gen = -1
             stream.close()
+
+    # ================================================================== 전체 캐시 채우기 (별도 스레드)
+    def _fill(self, token: int, pin: _Pinned, path: Path, spec: DecodeSpec, a: int, b: int, hwaccel: str,
+              legacy: bool, reserve: int, whole: bool, key: tuple) -> None:  # noqa: C901
+        def alive() -> bool:
+            return not self._quit and self._fill_token == token
+
+        def finish(ok: bool, msg: str) -> None:
+            with self._cv:
+                if self._fill_token != token or self._fill_name is None:
+                    return              # 이미 취소됨 (취소한 쪽이 알렸다)
+                self._fill_name = None
+                if ok and pin.complete and self._key == key:
+                    # 이 영상은 전부 전체 캐시에 있다 → LRU 는 중복이므로 비운다
+                    self._cache.clear()
+                    self._cache_bytes = 0
+            self.cache_changed.emit()
+            self.fill_finished.emit(pin.name, ok, msg)
+
+        ffmpeg = ffmpeg_locator.find_ffmpeg()
+        if ffmpeg is None:
+            finish(False, "ffmpeg is not available.")
+            return
+        total = b - a + 1
+        w, h = spec.out_w, spec.out_h
+        t0 = time.monotonic()
+        last_emit = 0.0
+        with self._cv:
+            done = sum(1 for fr in range(a, b + 1) if fr in pin.frames)
+        f = a
+        eof_at: int | None = None
+        while alive():
+            with self._cv:
+                while f <= b and f in pin.frames:
+                    f += 1
+            if f > b:
+                break
+            stream, got, hwaccel, legacy, err = open_stream(
+                ffmpeg, path, spec, f, hwaccel, legacy, alive, lambda msg: self.fill_log.emit(f"[{pin.name}] {msg}"))
+            if stream is None:
+                if err:
+                    finish(False, f"Caching {pin.name} failed: {err}")
+                    return
+                eof_at = f
+                break
+            n = 0
+            try:
+                while alive() and got is not None:
+                    idx, data = got
+                    if idx > b:
+                        break
+                    with self._cv:
+                        have = idx in pin.frames
+                    if not have:
+                        img = QImage(data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+                        with self._cv:
+                            if idx not in pin.frames:
+                                pin.frames[idx] = img
+                                done += 1
+                    n += 1
+                    f = idx + 1
+                    if n % C.DRAW_FULL_CACHE_MEM_CHECK_EVERY == 0:
+                        mem = system_memory()
+                        if mem is not None and mem.available < reserve:
+                            finish(False, f"Stopped caching {pin.name}: system memory is low "
+                                          f"({format_gib(mem.available)} free). {done} of {total} frames cached.")
+                            return
+                    now = time.monotonic()
+                    if now - last_emit >= C.DRAW_FULL_CACHE_PROGRESS_MS / 1000.0:
+                        last_emit = now
+                        self.fill_progress.emit(pin.name, done, total)
+                        self.cache_changed.emit()
+                    got = stream.read_frame()
+                if alive() and got is None:
+                    code = stream.returncode()
+                    if code not in (0, None):
+                        tail = stream.stderr_tail()
+                        msg = tail.splitlines()[-1] if tail else f"ffmpeg exited with code {code}."
+                        finish(False, f"Caching {pin.name} failed: {msg}")
+                        return
+                    eof_at = stream.next_index
+            finally:
+                stream.close()
+            if eof_at is not None:
+                break
+        if not alive():
+            return
+        end = eof_at if eof_at is not None else b + 1
+        with self._cv:
+            # 영상 전체를 요청했고 0 번부터 끝까지 빈틈이 없어야 complete
+            pin.complete = (whole or eof_at is not None) and a == 0 and all(fr in pin.frames for fr in range(end))
+            total = min(total, end - a)
+        self.fill_progress.emit(pin.name, done, total)
+        finish(True, f"Cached {pin.name}: {done} frames, {format_gib(pin.nbytes)} in memory "
+                     f"({time.monotonic() - t0:.1f} s).")

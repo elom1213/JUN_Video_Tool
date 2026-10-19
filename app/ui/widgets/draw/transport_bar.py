@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """트랜스포트 바 (PLAN_DRAW_TAB 5.5, 13.1): 버튼 · 타임라인(그림 마커) · 프레임 스핀 · 타임코드 · 음량."""
 from __future__ import annotations
 
@@ -16,34 +16,49 @@ from .playback_controller import PlaybackController
 
 
 class _MarkerSlider(QSlider):
-    """그림이 있는 프레임 위치마다 그루브 아래에 코랄 점을 찍는다."""
+    """그림이 있는 프레임 위치마다 그루브 아래에 코랄 점을, 전체 캐시된 구간은 그루브 위에 녹색 줄을 그린다."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(Qt.Orientation.Horizontal, parent)
         self._markers: list[int] = []
+        self._cached: list[tuple[int, int]] = []
         self.setMinimumHeight(22)
 
     def set_markers(self, frames: list[int]) -> None:
         self._markers = list(frames)
         self.update()
 
+    def set_cached_ranges(self, ranges: list[tuple[int, int]]) -> None:
+        if ranges != self._cached:
+            self._cached = list(ranges)
+            self.update()
+
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         super().paintEvent(event)
-        if not self._markers or self.maximum() <= self.minimum():
+        if not (self._markers or self._cached) or self.maximum() <= self.minimum():
             return
         opt = QStyleOptionSlider()
         self.initStyleOption(opt)
         handle = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, opt,
                                              QStyle.SubControl.SC_SliderHandle, self)
         span = self.width() - handle.width()
+        lo, hi, half = self.minimum(), self.maximum(), handle.width() / 2
+
+        def xpos(f: int) -> float:
+            return QStyle.sliderPositionFromValue(lo, hi, f, span) + half
+
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setPen(Qt.PenStyle.NoPen)
+        if self._cached:
+            p.setBrush(QColor(C.Colors.OK))
+            for a, b in self._cached:
+                x0, x1 = int(xpos(a)), int(xpos(b))
+                p.drawRect(x0, 1, max(1, x1 - x0 + 1), 2)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setBrush(QColor(C.Colors.ACCENT))
         y = self.height() - 3
         for f in self._markers:
-            x = QStyle.sliderPositionFromValue(self.minimum(), self.maximum(), f, span) + handle.width() / 2
-            p.drawEllipse(int(x) - 2, y - 2, 4, 4)
+            p.drawEllipse(int(xpos(f)) - 2, y - 2, 4, 4)
         p.end()
 
 
@@ -143,6 +158,9 @@ class TransportBar(QWidget):
 
     def set_markers(self, frames: list[int]) -> None:
         self.slider.set_markers(frames)
+
+    def set_cached_ranges(self, ranges: list[tuple[int, int]]) -> None:
+        self.slider.set_cached_ranges(ranges)
 
     def set_frame(self, frame: int) -> None:
         self._updating = True

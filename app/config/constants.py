@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """전역 상수 · 품질 매핑 · 휴리스틱 계수.
 
 PySide6 를 import 하지 않는다 (core 와 테스트에서 공유).
@@ -125,9 +125,14 @@ THUMB_CACHE_SIZE = 500
 # Draw 탭 (PLAN_DRAW_TAB 4.3, 13.6)
 # ---------------------------------------------------------------------------
 DRAW_DECODE_MAX_WIDTH = 1280      # 디코드 폭 상한 (px). 소스가 더 작으면 소스 폭
-DRAW_CACHE_BUDGET_MB = 512        # 프레임 캐시 메모리 상한
+DRAW_CACHE_BUDGET_MB = 2048       # 일반(LRU) 프레임 캐시 메모리 상한. 전체 캐시는 따로 잡는다
+# 전체 캐시 (Cache Whole Video): 시스템에 남겨 둘 여유 메모리 = max(최소 GB, 전체 RAM x 비율)
+DRAW_FULL_CACHE_RESERVE_MIN_GB = 4.0
+DRAW_FULL_CACHE_RESERVE_RATIO = 0.15
+DRAW_FULL_CACHE_MEM_CHECK_EVERY = 32   # 이 프레임 수마다 남은 메모리를 다시 확인 (다른 앱이 먹으면 멈춘다)
+DRAW_FULL_CACHE_PROGRESS_MS = 200      # 진행 신호 최소 간격
 DRAW_PREFETCH_FORWARD = 24        # 시크 뒤 앞으로 미리 디코드할 프레임 수
-DRAW_PREFETCH_BACKWARD = 12       # 뒤로 갈 때 이만큼 앞에서 시작해 디코드
+DRAW_PREFETCH_BACKWARD = 48       # 뒤로 갈 때 이만큼 앞에서 시작해 디코드 (어차피 키프레임부터 디코드하므로 넉넉히)
 DRAW_PLAY_AHEAD = 48              # 재생 중 디코더가 표시 프레임보다 앞서 가도 되는 최대 프레임 수
 DRAW_SCRUB_PX_PER_FRAME = 8       # 가운데 드래그 스크럽 감도
 DRAW_SCRUB_PX_MIN, DRAW_SCRUB_PX_MAX = 2, 40

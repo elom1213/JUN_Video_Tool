@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-19
 """Draw 탭 프레임 디코더 (PLAN_DRAW_TAB 4.1, 13.1).
 
 ffmpeg 한 프로세스가 시작 프레임부터 순차로 RGB24 raw 프레임을 내보내고, 우리는 w*h*3 바이트씩 읽는다.
@@ -109,15 +109,21 @@ class FrameStream:
         if out is None:
             return None
         need = self.spec.frame_bytes
-        buf = bytearray()
+        # readinto 로 미리 잡은 버퍼에 바로 받는다. read(n) 은 파이프가 몇 KB 씩만 돌려줘도 매번 n 바이트를
+        # 새로 할당하므로 (프레임당 수백 번 x 2.7 MB) 디코드보다 읽기가 5 배 느려진다
+        buf = bytearray(need)
+        view = memoryview(buf)
+        got = 0
         try:
-            while len(buf) < need:
-                chunk = out.read(need - len(buf))
-                if not chunk:
+            while got < need:
+                k = out.readinto(view[got:])
+                if not k:
                     return None
-                buf += chunk
+                got += k
         except (OSError, ValueError):
             return None
+        finally:
+            view.release()
         idx = self.next_index
         self.next_index += 1
         return idx, bytes(buf)
