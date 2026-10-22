@@ -6,13 +6,17 @@
 
 타임라인 확대(set_zoom): 슬라이더의 범위가 영상 전체가 아니라 [lo, hi] 가 된다. 재생 위치가 그 밖이면 핸들은 가장자리에 붙고,
 프레임 스핀 · 타임코드는 실제 프레임을 보여 준다. 마커 · 캐시 줄 · 구간 핸들은 보이는 범위만 그린다.
+타임라인 아래의 _RangeSlider(마야 Range Slider 꼴)는 영상 전체 위에 확대 창을 보여 주고, 양 끝 드래그 = 크기, 가운데 드래그 = 이동,
+더블클릭 = 전체로 돌린다 (zoom_changed).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from typing import Callable
+
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSlider, QSpinBox, QStyle, QStyleOptionSlider, QToolButton,
-                               QWidget)
+                               QVBoxLayout, QWidget)
 
 from ....config import constants as C
 from ....core.utils import frame_timecode
@@ -195,6 +199,165 @@ class _MarkerSlider(QSlider):
         p.end()
 
 
+class _RangeSlider(QWidget):
+    """타임라인 확대 창 (마야 Range Slider 꼴). 띠 = 영상 전체 (0 ~ last), 밝은 창 = 타임라인에 펼쳐진 [lo, hi].
+
+    양 끝 그립 드래그 = 창 크기, 창 안 드래그 = 창 이동 (폭 유지), 더블클릭 = 전체. 창은 최소 두 프레임.
+    x 좌표는 위의 _MarkerSlider 와 같은 여백(margin, 핸들 반폭)을 써서 두 줄의 프레임 자리가 일치한다.
+    """
+    zoom_changed = Signal(int, int)        # lo, hi (드래그 중에도)
+    reset_requested = Signal()             # 더블클릭
+
+    GRIP_PX = 6                            # 그립 중심에서 이만큼 안이면 잡힌다
+    H = 14
+
+    def __init__(self, margin: Callable[[], float], parent=None) -> None:
+        super().__init__(parent)
+        self._margin = margin
+        self._last = 0
+        self._lo, self._hi = 0, 0
+        self._frame = 0
+        self._drag: str | None = None      # "lo" | "hi" | "move"
+        self._hover: str | None = None
+        self._grab_off = 0                 # move: 누른 프레임 - lo
+        self.setFixedHeight(self.H)
+        self.setMouseTracking(True)
+        self.setToolTip("Timeline zoom: drag the ends to resize, drag the middle to move, double-click for the whole video")
+
+    # ------------------------------------------------------------------ API
+    def set_last(self, last: int) -> None:
+        self._last = max(0, int(last))
+        self.update()
+
+    def set_zoom(self, lo: int, hi: int) -> None:
+        if (lo, hi) != (self._lo, self._hi):
+            self._lo, self._hi = int(lo), int(hi)
+            self.update()
+
+    def zoom(self) -> tuple[int, int]:
+        return self._lo, self._hi
+
+    def set_frame(self, frame: int) -> None:
+        if frame != self._frame:
+            self._frame = int(frame)
+            self.update()
+
+    # ------------------------------------------------------------------ 좌표
+    def _span(self) -> tuple[float, float]:
+        m = float(self._margin())
+        return m, max(1.0, self.width() - 2 * m)
+
+    def _xpos(self, f: int) -> float:
+        m, w = self._span()
+        return m + (f / self._last * w if self._last > 0 else 0.0)
+
+    def _frame_at(self, x: float) -> int:
+        m, w = self._span()
+        if self._last <= 0:
+            return 0
+        return max(0, min(self._last, int(round((x - m) / w * self._last))))
+
+    def _hit(self, pos: QPointF) -> str | None:
+        if self._last < 1:
+            return None
+        xl, xh = self._xpos(self._lo), self._xpos(self._hi)
+        dl, dh = abs(pos.x() - xl), abs(pos.x() - xh)
+        if min(dl, dh) <= self.GRIP_PX:
+            if dl == dh:
+                return "lo" if pos.x() < xl else "hi"
+            return "lo" if dl < dh else "hi"
+        if xl < pos.x() < xh:
+            return "move"
+        return None
+
+    # ------------------------------------------------------------------ 마우스
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        pos = event.position()
+        self._drag = self._hit(pos)
+        if self._drag == "move":
+            self._grab_off = self._frame_at(pos.x()) - self._lo
+        elif self._drag is not None:
+            self._drag_to(pos.x())
+        self.update()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        pos = event.position()
+        if self._drag is not None:
+            self._drag_to(pos.x())
+            return
+        hover = self._hit(pos)
+        if hover != self._hover:
+            self._hover = hover
+            self.setCursor({"lo": Qt.CursorShape.SplitHCursor, "hi": Qt.CursorShape.SplitHCursor,
+                            "move": Qt.CursorShape.SizeAllCursor}.get(hover, Qt.CursorShape.ArrowCursor))
+            self.update()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:
+            self._drag = None
+            self.update()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._last >= 1:
+            self._drag = None
+            self.reset_requested.emit()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._hover is not None:
+            self._hover = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+        super().leaveEvent(event)
+
+    def _drag_to(self, x: float) -> None:
+        f = self._frame_at(x)
+        lo, hi = self._lo, self._hi
+        if self._drag == "lo":
+            lo = min(f, hi - 1)                                  # 창은 최소 두 프레임
+        elif self._drag == "hi":
+            hi = max(f, lo + 1)
+        elif self._drag == "move":
+            width = hi - lo
+            lo = max(0, min(f - self._grab_off, self._last - width))
+            hi = lo + width
+        lo, hi = max(0, lo), min(self._last, hi)
+        if (lo, hi) != (self._lo, self._hi):
+            self._lo, self._hi = lo, hi
+            self.update()
+            self.zoom_changed.emit(lo, hi)
+
+    # ------------------------------------------------------------------ 페인트
+    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setPen(Qt.PenStyle.NoPen)
+        m, w = self._span()
+        h = self.height()
+        # 영상 전체 띠
+        p.setBrush(QColor(C.Colors.TRACK))
+        p.drawRoundedRect(QRectF(m, h / 2 - 3, w, 6), 3, 3)
+        if self._last < 1:
+            p.end()
+            return
+        xl, xh = self._xpos(self._lo), self._xpos(self._hi)
+        # 확대 창
+        band = QColor(C.Colors.ACCENT)
+        band.setAlpha(110 if self._drag == "move" or self._hover == "move" else 80)
+        p.setBrush(band)
+        p.drawRect(QRectF(xl, 1, max(1.0, xh - xl), h - 2))
+        # 양 끝 그립
+        for key, x in (("lo", xl), ("hi", xh)):
+            active = self._drag == key or (self._drag is None and self._hover == key)
+            p.setBrush(QColor(C.Colors.TEXT if active else C.Colors.ACCENT))
+            p.drawRect(QRectF(x - 2, 0, 4, h))
+        # 재생 위치 눈금
+        p.setBrush(QColor(C.Colors.TEXT))
+        xf = self._xpos(self._frame)
+        p.drawRect(QRectF(xf - 1, h / 2 - 4, 2, 8))
+        p.end()
+
+
 def _tool_button(name: str, tip: str) -> QToolButton:
     b = QToolButton()
     b.setIcon(icon(name))
@@ -212,6 +375,8 @@ class TransportBar(QWidget):
     prev_drawn_clicked = Signal()      # 그림이 있는 이전 프레임으로
     next_drawn_clicked = Signal()      # 그림이 있는 다음 프레임으로
     cache_range_changed = Signal(int, int)   # 타임라인 핸들로 캐시 구간을 바꿈 (start, end)
+    zoom_changed = Signal(int, int)          # 아래 범위 슬라이더로 확대 창을 바꿈 (lo, hi)
+    zoom_reset_requested = Signal()          # 범위 슬라이더 더블클릭
 
     def __init__(self, controller: PlaybackController, parent=None) -> None:
         super().__init__(parent)
@@ -237,6 +402,8 @@ class TransportBar(QWidget):
         self.zoom_lo_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._last = 0
         self._zoom = (0, 0)
+        # 타임라인 아래 범위 슬라이더 (마야 Range Slider): 영상 전체 위의 확대 창을 끌어서 정한다
+        self.range_slider = _RangeSlider(lambda: self.slider._geom()[3])
         self.spin = QSpinBox()
         self.spin.setKeyboardTracking(False)
         self.spin.setMinimumWidth(70)
@@ -261,7 +428,13 @@ class TransportBar(QWidget):
         lay.addWidget(self.btn_prev_drawn)
         lay.addWidget(self.btn_next_drawn)
         lay.addWidget(self.zoom_lo_label)
-        lay.addWidget(self.slider, 1)
+        timeline = QWidget()
+        tl = QVBoxLayout(timeline)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(0)
+        tl.addWidget(self.slider)
+        tl.addWidget(self.range_slider)
+        lay.addWidget(timeline, 1)
         lay.addWidget(self.zoom_hi_label)
         lay.addWidget(QLabel("Frame"))
         lay.addWidget(self.spin)
@@ -285,6 +458,8 @@ class TransportBar(QWidget):
         self.slider.sliderReleased.connect(self._slider_released)
         self.slider.valueChanged.connect(self._slider_value)
         self.slider.cache_range_changed.connect(self.cache_range_changed)
+        self.range_slider.zoom_changed.connect(self.zoom_changed)
+        self.range_slider.reset_requested.connect(self.zoom_reset_requested)
         self.spin.valueChanged.connect(self._spin_value)
         self.btn_mute.toggled.connect(self._mute_toggled)
         self.volume.valueChanged.connect(self.volume_changed)
@@ -302,6 +477,7 @@ class TransportBar(QWidget):
         self.spin.setRange(0, self._last)
         self.total_label.setText(f"/ {last_frame}")
         self._updating = False
+        self.range_slider.set_last(self._last)
         self.set_zoom(0, self._last)
 
     def zoom(self) -> tuple[int, int]:
@@ -313,6 +489,7 @@ class TransportBar(QWidget):
         if hi < lo:
             lo, hi = hi, lo
         self._zoom = (lo, hi)
+        self.range_slider.set_zoom(lo, hi)
         self._updating = True
         self.slider.setRange(lo, hi)
         self.slider.setValue(self.spin.value())
@@ -337,6 +514,7 @@ class TransportBar(QWidget):
         self._updating = True
         if not self.slider.isSliderDown():
             self.slider.setValue(frame)
+        self.range_slider.set_frame(frame)
         self.spin.setValue(frame)
         self.tc_label.setText(frame_timecode(frame, self.controller.fps()))
         self._updating = False

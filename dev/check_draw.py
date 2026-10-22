@@ -659,6 +659,42 @@ def main() -> int:
         zp.reset_btn.click()
         pump(app, 0.1)
         check(d2.timeline_zoom() == (0, 299), "panel Reset -> whole")
+        # 범위 슬라이더 (타임라인 아래): 그립 드래그 = 크기, 가운데 드래그 = 이동, 더블클릭 = 전체. 패널 스핀이 따라온다
+        rs = tr.range_slider
+        d2.set_timeline_zoom(50, 70)
+        pump(app, 0.1)
+        check(rs.zoom() == (50, 70), f"range slider shows the zoom {rs.zoom()}")
+        ym = rs.height() // 2
+        x70, x100 = int(rs._xpos(70)), int(rs._xpos(100))
+        QTest.mousePress(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x70, ym))
+        QTest.mouseMove(rs, QPoint(x100, ym))
+        QTest.mouseRelease(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x100, ym))
+        pump(app, 0.1)
+        lo, hi = d2.timeline_zoom()
+        check(lo == 50 and abs(hi - 100) <= 1 and zp.zoom() == (lo, hi) and (sl.minimum(), sl.maximum()) == (lo, hi),
+              f"drag right grip -> zoom {d2.timeline_zoom()}, panel {zp.zoom()}")
+        # 가운데 드래그 (오프스크린은 슬라이더가 좁아 창을 넉넉히 잡는다: 50 ~ 200, +50 이동)
+        d2.set_timeline_zoom(50, 200)
+        pump(app, 0.1)
+        lo, hi = d2.timeline_zoom()
+        width = hi - lo
+        xm, xm2 = int((rs._xpos(lo) + rs._xpos(hi)) / 2), int((rs._xpos(lo + 50) + rs._xpos(hi + 50)) / 2)
+        QTest.mousePress(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(xm, ym))
+        QTest.mouseMove(rs, QPoint(xm2, ym))
+        QTest.mouseRelease(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(xm2, ym))
+        pump(app, 0.1)
+        lo2, hi2 = d2.timeline_zoom()
+        tol = int(300 / max(1.0, rs._span()[1])) + 1          # 1 px 이 몇 프레임인지 (오프스크린은 슬라이더가 좁다)
+        check(hi2 - lo2 == width and abs(lo2 - (lo + 50)) <= tol and zp.zoom() == (lo2, hi2),
+              f"drag middle -> moved window {d2.timeline_zoom()} (width kept, tol {tol})")
+        QTest.mousePress(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(rs._xpos(lo2)), ym))
+        QTest.mouseMove(rs, QPoint(int(rs._xpos(299)), ym))
+        QTest.mouseRelease(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(rs._xpos(299)), ym))
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (hi2 - 1, hi2), f"left grip past the right one -> two frames {d2.timeline_zoom()}")
+        QTest.mouseDClick(rs, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(rs._xpos(150)), ym))
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (0, 299) and zp.zoom() == (0, 299), "double-click -> whole video")
         # 해상도를 바꿔 다시 열어도 확대는 남는다
         d2.set_timeline_zoom(50, 70)
         cp.res_combo.setCurrentIndex(cp.res_combo.findData(50))

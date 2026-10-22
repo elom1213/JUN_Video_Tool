@@ -933,3 +933,16 @@ EXPORT_SUFFIX = "_draw"
 검증: `pytest` 152개 (`normalize_zoom`), `dev/check_draw.py` [13] ALL OK — 스핀 50-70 → 슬라이더 양 끝 50 · 70 · 라벨 · `21 of 300 frames`,
 확대된 타임라인 클릭 → 그 프레임, 범위 밖 프레임 20 에서 스핀 20 · 핸들 50, `→` 이동 정상, 시작 70 → (70, 71), 끝 30 → (29, 30),
 범위 밖 캐시 핸들 안 잡힘 · 안 핸들 드래그, `Z` / `Shift+Z` / 패널 버튼, 해상도 변경 뒤 유지.
+
+### 18.1 추가 요청 (같은 날, v0.4.4) — 끌어서 확대
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C6 | 숫자 입력 대신 타임 슬라이더에서 드래그 · 드롭으로 확대 구간을 정하기 (마야 타임라인과 비슷하게) | `_RangeSlider(QWidget)` — 마야 Range Slider 꼴. `_MarkerSlider` 바로 아래(세로 묶음, 높이 14 px). 띠 = 0 ~ last, 주황 창 = `[lo, hi]`, 양 끝 4 px 그립, 재생 위치 눈금. 그립 드래그 = 크기(최소 두 프레임), 창 안 드래그 = 폭 유지 이동(벽에서 멈춤), 더블클릭 = `reset_requested`. 호버 커서: 그립 `SplitHCursor`, 창 안 `SizeAllCursor`. x 여백은 위 슬라이더의 핸들 반폭(`slider._geom()[3]`)을 그대로 써서 두 줄의 프레임 자리가 맞는다 |
+
+- 신호 흐름: `_RangeSlider.zoom_changed` → `TransportBar.zoom_changed` → `DrawTab.set_timeline_zoom` (기존 단일 진입점) →
+  패널 스핀 · 트랜스포트(`set_zoom` 이 범위 슬라이더도 맞춤). 드래그는 프레임마다 오므로 **트랜스포트에서 온 변경은 로그하지 않는다**
+  (`self.sender() is not self.transport`).
+
+검증: `dev/check_draw.py` [13] — 오른쪽 그립 70 → 100 (패널 · 슬라이더 양 끝 따라옴), 가운데 +100 이동 (폭 유지), 왼쪽 그립을 오른쪽 너머로 → 두 프레임,
+더블클릭 → 전체. 실제 창 캡처로 위 타임라인과 자리 일치 확인.

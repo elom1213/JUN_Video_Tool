@@ -3,7 +3,7 @@
 # last Update date : 2026-10-22
 """툴 버전 정보. CHANGELOG.md 와 함께 갱신한다."""
 
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 LAST_UPDATE = "2026-10-22"
 APP_NAME = "JUN Video Tool"
 ORG_NAME = "JUN"

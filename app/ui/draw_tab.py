@@ -315,6 +315,8 @@ class DrawTab(QWidget):
         self.transport.cache_range_changed.connect(self.set_cache_range)
         # 타임라인 확대: 패널 스핀박스 · 버튼 · 메뉴가 모두 set_timeline_zoom 으로 모인다
         self.zoom_panel.zoom_changed.connect(self.set_timeline_zoom)
+        self.transport.zoom_changed.connect(self.set_timeline_zoom)
+        self.transport.zoom_reset_requested.connect(self.reset_timeline_zoom)
         self.zoom_panel.fit_cache_clicked.connect(self.zoom_to_cache_range)
         self.zoom_panel.reset_clicked.connect(self.reset_timeline_zoom)
 
@@ -716,7 +718,8 @@ class DrawTab(QWidget):
         self._zoom = zoom
         self.zoom_panel.set_zoom(*zoom)
         self.transport.set_zoom(*zoom)
-        if changed:
+        if changed and self.sender() is not self.transport:
+            # 범위 슬라이더 드래그는 프레임마다 오므로 로그하지 않는다 (타임라인 양 끝 숫자가 바로 보인다)
             if zoom == (0, last):
                 self.log.append("Timeline shows the whole video.")
             else:
