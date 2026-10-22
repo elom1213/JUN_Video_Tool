@@ -694,7 +694,8 @@ QToolButton#Swatch:checked { border: 2px solid #ffffff; }
 |------|------|
 | 좌버튼 드래그 | 툴이 `draw` 면 스트로크, `erase` 면 지우기. 재생 중이면 먼저 정지 |
 | 가운데 버튼 드래그 | 스크럽 (감도 `draw/scrub_px`, 2~40 px/frame). 툴과 무관 |
-| 우버튼 | 아무것도 안 함 |
+| 우버튼 | 아무것도 안 함 → v0.4.6 부터 드래그 = 보기 이동, 더블클릭 = 보기 되돌림 (19장) |
+| 휠 | (v0.4.6) 커서 자리를 고정한 채 보기 확대 · 축소 (19장) |
 
 - 툴바 `Tool: (● Draw ○ Erase)`, 단축키 `D` / `E`. `S`(Scrub Tool) 는 없다. 설정 키 `draw/tool`.
 - 사이드 패널의 `Scrub` 그룹은 남긴다(라벨 `Middle-drag sensitivity`).
@@ -954,3 +955,33 @@ EXPORT_SUFFIX = "_draw"
 | C7 | `Range` 의 `All` 옆에 `Get Zoom` 버튼: 누르면 `Show` 의 확대 구간 시작 · 끝이 `Range` 에 들어가게 | `CachePanel.get_zoom_btn` → `get_zoom_clicked` → `DrawTab.cache_range_from_zoom()` = `set_cache_range(*self._zoom)` (기존 단일 진입점이라 스핀 · 타임라인 핸들 · 버튼 문구 · 현황이 같이 바뀐다). 영상이 있으면 활성 |
 
 검증: `dev/check_draw.py` [13] — 확대 120-180 에서 `Get Zoom` → 캐시 구간 (120, 180), 스핀 · 핸들 일치, `Zoom to Cache Range` 비활성(같음), `61 frames`.
+
+---
+
+## 19. 2026-10-22 추가 요청 (v0.4.6) — 캔버스 보기 확대 · 이동
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C8 | Draw 탭 영상을 마우스 휠로 확대 · 축소해서 보기 | `VideoCanvas.wheelEvent`: `angleDelta().y() / 120` 칸마다 `DRAW_VIEW_ZOOM_STEP`(1.25) 배, 범위 `DRAW_VIEW_ZOOM_MIN/MAX`(0.25 ~ 16). 커서 아래 영상 자리를 고정한다 (`geometry.zoom_about`). 그리는 중 · 스크럽 중에는 무시 |
+| C9 | 드래그로 보이는 위치 옮기기 | **우버튼 드래그** = 이동 (우버튼은 13.2 에서 비어 있었다). `ClosedHandCursor`, 이동 중엔 툴 크기 원을 숨기고 `is_busy()` 가 참 |
+| — | 되돌리기 | 우버튼 더블클릭, `Draw > Reset View Zoom`(`F`) → `reset_view()`. 액션은 배율 · 이동이 기본이 아닐 때만 활성(`view_changed` 신호) |
+
+**설계 — 사각형 하나만 바뀐다**
+- 상태는 `_zoom`(1 = 맞춤) 과 `_pan`(영상 중심 − 위젯 중심, px) 둘. `_rect()` 가 `fit_rect` 대신
+  `geometry.view_rect(W, H, src_w, src_h, zoom, pan_x, pan_y)` 를 돌려주므로, 그 사각형을 쓰는 모든 것 — 영상 · `paint_frame`(스트로크 · 고스트) ·
+  `to_video` / `to_screen` · 툴 크기 원(`_scale()`) · 반전 변환(`_flip_transform(vr)`) — 이 코드 변경 없이 따라온다.
+  문서 · 저장 · 내보내기는 소스 픽셀이라 영향이 없다.
+- **클램프 규칙** (`_axis_pos`, 축마다 독립): 영상이 위젯보다 작으면 가운데 고정(pan 무시), 크면 `x ∈ [W − w, 0]` — 가장자리 안쪽에 빈 공간이
+  생기지 않는 범위. 영상을 화면 밖으로 잃어버릴 수 없다. `clamp_pan` 은 그 규칙을 거친 **실효 pan** 을 돌려주고 `_set_view` 는 늘 이것을 저장하므로
+  (잘린 여분을 들고 있지 않아) 반대로 끌 때 즉시 움직인다.
+- **커서 기준 확대** (`zoom_about`): 화면 공간에서 영상 중심 c 를 앵커 a 기준으로 k = new/old 배 멀어지게 한다 — c′ = a + (c − a)·k.
+  반전과 무관하다. 레터박스 축에서 가장자리 근처를 기준으로 키우면 자리를 지키려다 빈 공간이 생기므로 클램프가 가장자리에 붙인다 (의도한 동작).
+- 배율은 `1.25 ** n` 이라 되돌리면 정확히 1.0 이 되지만, `set_view_zoom` 이 `|z − 1| < 1e-6` 을 1.0 으로 스냅해 배지 · 기본 판정을 흐리지 않는다.
+- 배지: `flip_label` 과 `zoom_label`(맞춤이면 "", 아니면 `250%`) 을 ` · ` 로 이어 오른쪽 위.
+- 설정에 저장하지 않는다. `clear()` 와 **소스 크기가 바뀌는** `set_source_size` 에서 맞춤으로 (해상도만 바꿔 같은 크기로 다시 열면 유지).
+- 큰 배율(16×, 4K → 60k px 폭)에서도 `QPainter.drawImage(vr, image)` 는 위젯 밖을 그리지 않으므로 비용은 보이는 영역에 비례한다.
+
+검증: `pytest` 157개 (`view_rect` 항등 · 가운데 · 클램프 · 축소, `clamp_pan` 실효값, `zoom_about` 앵커 보존 6 케이스 + 레터박스 클램프, `zoom_label`),
+`dev/check_draw.py` [14] ALL OK — 휠 1칸 1.25배 · 사각형 배율 · 커서 x 보존(세로는 아직 캔버스보다 낮아 가운데), 양축이 커진 뒤 커서 아래 소스 자리 보존(1 px),
+2.44배에서 그은 선이 소스 (400,300)→(600,300), 우드래그 (−40, −30) 만큼 이동 · 그리지 않음, 양 구석 클램프, 우버튼 더블클릭 · `F` → 맞춤,
+80 % 축소는 가운데, 2칸 올리고 2칸 내리면 정확히 1.0, 최대 16 · 최소 0.25, 그리는 중 휠 무시, 해상도 변경 뒤 유지, `clear()` 되돌림.

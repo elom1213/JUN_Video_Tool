@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.6 — 2026-10-22
+
+- **Draw 탭 캔버스 보기 확대 · 이동**: 영상 위에서 **마우스 휠**을 굴리면 커서 아래 자리를 고정한 채 1.25 배씩 확대 · 축소된다
+  (25 % ~ 1600 %, 맞춤 = 100 %). **우버튼 드래그**로 보이는 위치를 옮긴다. 영상이 캔버스보다 크면 가장자리 안쪽에 빈 공간이
+  생기지 않는 범위까지만, 작으면 가운데에 고정이라 영상을 화면 밖으로 잃어버릴 수 없다. **우버튼 더블클릭** 또는
+  `Draw > Reset View Zoom`(`F`) 으로 맞춤으로 되돌린다. 확대 중엔 캔버스 오른쪽 위에 배율(`250%`, 반전과 함께면 `Flipped H · 250%`).
+  - 보기만 바뀐다: 확대 상태에서 그려도 선은 원본 픽셀 좌표로 들어가고, 저장 파일 · 내보내기 · 고스트 · 지우개 · 툴 크기 원이 모두 같이 따라온다.
+  - 그리는 중 · 스크럽 중에는 휠을 무시한다. 해상도를 바꿔 다시 열어도 남고, 다른 크기의 영상을 열거나 영상을 비우면 맞춤으로.
+- `geometry.view_rect` · `clamp_pan` · `zoom_about` · `zoom_label`, `VideoCanvas.set_view_zoom` · `set_view_pan` · `reset_view` · `view_changed`,
+  상수 `DRAW_VIEW_ZOOM_STEP` · `DRAW_VIEW_ZOOM_MIN/MAX`. `tests/test_draw_geometry.py` 5개, `dev/check_draw.py` [14].
+
 ## 0.4.5 — 2026-10-22
 
 - **`Get Zoom` 버튼** (`Resolution & Cache` 패널 `Range` 행, `All` 옆): 누르면 지금 타임라인에 펼쳐진 확대 구간

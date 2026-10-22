@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QPoint, QPointF, QSettings, Qt  # noqa: E402
+from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -37,6 +38,7 @@ from app.core.drawing import legacy_sidecar_path, sidecar_path  # noqa: E402
 from app.core.ffmpeg_locator import find_ffmpeg  # noqa: E402
 from app.core.frame_decoder import FrameStream, make_decode_spec  # noqa: E402
 from app.core.media_probe import probe  # noqa: E402
+from app.ui.widgets.draw.geometry import to_video  # noqa: E402
 
 FAILS: list[str] = []
 
@@ -715,6 +717,132 @@ def main() -> int:
         pump(app, 3, lambda: cv2._image is not None and cv2._image.width() == 1280)
         d2.reset_timeline_zoom()
         d2.set_cache_range(0, 299)
+
+        print("[14] view zoom (wheel) and pan (right-drag)")
+        f = d2.controller.frame()
+        pump(app, 3, lambda: cv2._image_frame == f)
+        cv2.setFocus()
+        fit = cv2.video_rect()
+        check(cv2.view_zoom() == 1.0 and cv2.is_view_default() and not d2.act_view_reset.isEnabled(),
+              f"starts fitted: zoom {cv2.view_zoom()}, rect {fit.getRect()}")
+
+        def wheel(pos: QPointF, steps: int) -> None:
+            ev = QWheelEvent(pos, cv2.mapToGlobal(pos), QPoint(), QPoint(0, 120 * steps), Qt.MouseButton.NoButton,
+                             Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            app.sendEvent(cv2, ev)
+            pump(app, 0.05)
+
+        def near(a: QPointF, b: QPointF, tol: float = 1.0) -> bool:
+            return abs(a.x() - b.x()) <= tol and abs(a.y() - b.y()) <= tol
+
+        # 휠 한 칸: 1.25배, 커서 아래 영상 자리(소스 1/4 지점)는 그대로
+        anchor = cv2.screen_point(320, 180)
+        wheel(anchor, 1)
+        check(abs(cv2.view_zoom() - 1.25) < 1e-9 and d2.act_view_reset.isEnabled(), f"wheel up -> zoom {cv2.view_zoom()}")
+        vr = cv2.video_rect()
+        check(abs(vr.width() - fit.width() * 1.25) < 1e-6 and abs(vr.height() - fit.height() * 1.25) < 1e-6,
+              f"video rect scaled {vr.getRect()}")
+        # 가로는 영상이 캔버스보다 넓어져 커서 자리가 지켜지고, 세로는 아직 캔버스보다 낮아 가운데 고정이다 (빈 공간 금지)
+        sp1 = cv2.screen_point(320, 180)
+        check(abs(sp1.x() - anchor.x()) <= 1.0 and abs(vr.center().y() - cv2.height() / 2) < 1e-6,
+              f"x under the cursor stays put ({sp1.x():.1f} vs {anchor.x():.1f}); y centered while shorter than the canvas")
+        img = cv2.grab().toImage()
+        # 배지: 오른쪽 위 어딘가에 밝은 글자 (정확한 문구는 paintEvent 의 zoom_label)
+        check(cv2._zoom == 1.25 and img.width() == cv2.width(), "badge paints (no crash while zoomed)")
+        wheel(anchor, 3)
+        check(abs(cv2.view_zoom() - 1.25 ** 4) < 1e-9, f"three more -> {cv2.view_zoom():.4f}")
+        # 양축 모두 캔버스보다 커진 뒤에는 커서 아래 자리가 그대로다
+        vr = cv2.video_rect()
+        check(vr.width() > cv2.width() and vr.height() > cv2.height(), "video larger than the canvas on both axes")
+        anchor2 = QPointF(cv2.width() * 0.6, cv2.height() * 0.4)
+        src = to_video(anchor2.x(), anchor2.y(), (vr.x(), vr.y(), vr.width(), vr.height()), 1280, 720)
+        wheel(anchor2, 1)
+        sp2 = cv2.screen_point(*src)
+        check(abs(cv2.view_zoom() - 1.25 ** 5) < 1e-9 and near(sp2, anchor2),
+              f"zoom around the cursor keeps the source point under it ({sp2.x():.1f},{sp2.y():.1f} vs "
+              f"{anchor2.x():.1f},{anchor2.y():.1f})")
+        wheel(anchor2, -1)
+        # 확대 상태에서 그은 선은 소스 좌표로 들어간다 (화면 배율만 다르다)
+        d2.doc.clear_frame(f)
+        d2._doc_changed()
+        q1, q2 = cv2.screen_point(400, 300), cv2.screen_point(600, 300)
+        QTest.mousePress(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q1.toPoint())
+        for k in range(1, 21):
+            QTest.mouseMove(cv2, QPoint(int(q1.x() + (q2.x() - q1.x()) * k / 20), int(q1.y())))
+        QTest.mouseRelease(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q2.toPoint())
+        pump(app, 0.1)
+        st = d2.doc.strokes_at(f)
+        (x0, y0), (x1, y1) = (st[-1].points[0], st[-1].points[-1]) if st else ((0, 0), (0, 0))
+        check(len(st) == 1 and abs(x0 - 400) <= 2 and abs(y0 - 300) <= 2 and abs(x1 - 600) <= 2 and abs(y1 - 300) <= 2,
+              f"stroke drawn while zoomed lands in source pixels ({x0:.0f},{y0:.0f}) -> ({x1:.0f},{y1:.0f})")
+        # 우드래그 = 이동 (왼쪽으로 40 px, 위로 30 px)
+        before = cv2.video_rect()
+        p0 = QPoint(cv2.width() // 2, cv2.height() // 2)
+        QTest.mousePress(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0)
+        check(cv2.is_busy() and cv2._panning, "right press starts panning")
+        QTest.mouseMove(cv2, p0 + QPoint(-20, -15))
+        QTest.mouseMove(cv2, p0 + QPoint(-40, -30))
+        QTest.mouseRelease(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0 + QPoint(-40, -30))
+        pump(app, 0.1)
+        after = cv2.video_rect()
+        check(not cv2._panning and abs(after.x() - (before.x() - 40)) < 1e-6 and abs(after.y() - (before.y() - 30)) < 1e-6,
+              f"right-drag pans by (-40, -30): {before.x():.1f},{before.y():.1f} -> {after.x():.1f},{after.y():.1f}")
+        check(len(d2.doc.strokes_at(f)) == 1, "right-drag draws nothing")
+        # 이동은 영상 가장자리가 위젯 안쪽으로 들어오지 않는 범위까지만
+        QTest.mousePress(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0)
+        QTest.mouseMove(cv2, p0 + QPoint(5000, 5000))
+        QTest.mouseRelease(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0 + QPoint(5000, 5000))
+        pump(app, 0.1)
+        vr = cv2.video_rect()
+        check(vr.x() == 0.0 and vr.y() == 0.0, f"pan clamps at the top-left edge {vr.getRect()}")
+        QTest.mousePress(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0)
+        QTest.mouseMove(cv2, p0 + QPoint(-5000, -5000))
+        QTest.mouseRelease(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0 + QPoint(-5000, -5000))
+        pump(app, 0.1)
+        vr = cv2.video_rect()
+        check(abs(vr.right() - cv2.width()) < 1e-6 and abs(vr.bottom() - cv2.height()) < 1e-6,
+              f"pan clamps at the bottom-right edge {vr.getRect()} in {cv2.width()}x{cv2.height()}")
+        # 우버튼 더블클릭 → 되돌림
+        QTest.mouseDClick(cv2, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, p0)
+        pump(app, 0.1)
+        check(cv2.is_view_default() and cv2.video_rect() == fit and not d2.act_view_reset.isEnabled(),
+              f"right double-click -> fit {cv2.video_rect().getRect()}")
+        # 축소 (맞춤보다 작게) → 가운데, 그리고 F 로 되돌림
+        wheel(QPointF(10, 10), -1)
+        vr = cv2.video_rect()
+        check(abs(cv2.view_zoom() - 0.8) < 1e-9 and abs(vr.center().x() - cv2.width() / 2) < 1e-6
+              and abs(vr.center().y() - cv2.height() / 2) < 1e-6, f"wheel down below fit -> 80 %, centered {vr.getRect()}")
+        QTest.keyClick(cv2, Qt.Key.Key_F)
+        pump(app, 0.1)
+        check(cv2.is_view_default() and cv2.video_rect() == fit, "F -> fit")
+        # 휠은 2 칸 올리고 2 칸 내리면 정확히 1.0 (부동소수 찌꺼기 없음), 범위 밖은 잘린다
+        wheel(anchor, 2)
+        wheel(anchor, -2)
+        check(cv2.view_zoom() == 1.0 and cv2.is_view_default(), f"up 2 / down 2 -> exactly 1.0 ({cv2.view_zoom()})")
+        wheel(anchor, 40)
+        check(cv2.view_zoom() == 16.0, f"zoom clamps at max {cv2.view_zoom()}")
+        wheel(anchor, -80)
+        check(cv2.view_zoom() == 0.25, f"zoom clamps at min {cv2.view_zoom()}")
+        # 그리는 중에는 휠을 무시한다
+        d2.reset_view()
+        QTest.mousePress(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q1.toPoint())
+        wheel(anchor, 1)
+        check(cv2.view_zoom() == 1.0, "wheel ignored while drawing")
+        QTest.mouseRelease(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q1.toPoint())
+        pump(app, 0.1)
+        # 해상도를 바꿔 다시 열어도(같은 소스 크기) 보기는 남고, 캔버스를 비우면 되돌아간다
+        wheel(anchor, 2)
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(50))
+        pump(app, 3, lambda: cv2._image is not None and cv2._image.width() == 640)
+        check(abs(cv2.view_zoom() - 1.25 ** 2) < 1e-9, f"view zoom survives resolution change ({cv2.view_zoom()})")
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(100))
+        pump(app, 3, lambda: cv2._image is not None and cv2._image.width() == 1280)
+        d2.doc.clear_frame(f)
+        d2._doc_changed()
+        cv2.clear("x")
+        check(cv2.is_view_default(), "clear() resets the view")
+        d2._load_video(d2._row)
+        pump(app, 3, lambda: cv2._image is not None)
         w2.close()
         pump(app, 0.5)
     finally:

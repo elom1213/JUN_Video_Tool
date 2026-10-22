@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
 # last Update date : 2026-10-22
-"""Draw 탭 (PLAN_DRAW_TAB 5장, 13장).
+"""Draw 탭 (PLAN_DRAW_TAB 5장, 13장, 16 ~ 19장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
 앞뒤 프레임의 선은 고스트로 겹쳐 보이고, 그림은 영상 옆 사이드카 `<영상이름>.draw.json` 으로 저장 · 자동 로드된다.
@@ -143,6 +143,10 @@ class DrawTab(QWidget):
             a.setToolTip(f"{a.text()} ({a.shortcut().toString()}). View only: drawings, saved files and exports "
                          f"keep the original orientation")
             a.toggled.connect(self._flip_changed)
+        # 보기 배율 · 이동 되돌리기 (19장). 휠 · 우드래그는 캔버스가 직접 처리한다
+        self.act_view_reset = self._act(None, "Reset View Zoom", "F", self.reset_view)
+        self.act_view_reset.setToolTip("Reset View Zoom (F). Mouse wheel over the video zooms around the cursor, "
+                                       "right-drag pans, right double-click resets")
 
         self.act_undo = self._act("undo", "Undo", "Ctrl+Z", self.undo)
         self.act_redo = self._act("redo", "Redo", "Ctrl+Y", self.redo)
@@ -327,6 +331,7 @@ class DrawTab(QWidget):
         cv.scrub_started.connect(self._scrub_started)
         cv.scrub_delta.connect(lambda d: c.seek(self._scrub_base + d))
         cv.draw_pressed_while_playing.connect(c.pause)
+        cv.view_changed.connect(self._view_changed)
         self.brush_panel.brush_changed.connect(cv.set_brush)
         self.brush_panel.eraser_changed.connect(cv.set_eraser_size)
         self.ghost_panel.ghost_changed.connect(cv.set_ghost)
@@ -343,7 +348,8 @@ class DrawTab(QWidget):
     def menu_actions(self) -> list[QAction | None]:
         return [self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                 self.act_last, self.act_prev_drawn, self.act_next_drawn, None,
-                self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v, None,
+                self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v,
+                self.act_view_reset, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
                 self.act_cache_whole, self.act_free_cache, self.act_zoom_cache, self.act_zoom_reset, None,
@@ -456,6 +462,7 @@ class DrawTab(QWidget):
         for act in (self.act_remove, self.act_clear_list, self.act_view_list, self.act_view_thumbs,
                     self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v):
             act.setEnabled(a)
+        self.act_view_reset.setEnabled(a and not self.canvas.is_view_default())
         for act in (self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                     self.act_last, self.act_save_as, self.act_load, self.act_export):
             act.setEnabled(a and has_video)
@@ -967,6 +974,16 @@ class DrawTab(QWidget):
                             f"exports keep the original orientation.")
         else:
             self.log.append("View flip off.")
+
+    # ================================================================== 보기 배율 · 이동 (19장)
+    def view_zoom(self) -> float:
+        return self.canvas.view_zoom()
+
+    def reset_view(self) -> None:
+        self.canvas.reset_view()
+
+    def _view_changed(self) -> None:
+        self.act_view_reset.setEnabled(self._active and not self.canvas.is_view_default())
 
     # ================================================================== 편집
     def _doc_changed(self) -> None:

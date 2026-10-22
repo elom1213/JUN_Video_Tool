@@ -156,6 +156,8 @@ DRAW_PREFETCH_BACKWARD = 48       # 뒤로 갈 때 이만큼 앞에서 시작해
 DRAW_PLAY_AHEAD = 48              # 재생 중 디코더가 표시 프레임보다 앞서 가도 되는 최대 프레임 수
 DRAW_SCRUB_PX_PER_FRAME = 8       # 가운데 드래그 스크럽 감도
 DRAW_SCRUB_PX_MIN, DRAW_SCRUB_PX_MAX = 2, 40
+DRAW_VIEW_ZOOM_STEP = 1.25          # 휠 한 칸당 캔버스 보기 배율 (PLAN_DRAW_TAB 19장)
+DRAW_VIEW_ZOOM_MIN, DRAW_VIEW_ZOOM_MAX = 0.25, 16.0   # 보기 배율 범위 (1.0 = 맞춤)
 DRAW_WIDTH_DEFAULT = 4.0          # 브러시 두께 (소스 px)
 DRAW_WIDTH_MIN, DRAW_WIDTH_MAX = 1.0, 64.0
 DRAW_COLOR_DEFAULT = "#e8734a"

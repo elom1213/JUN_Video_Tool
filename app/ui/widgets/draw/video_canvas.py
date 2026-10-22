@@ -1,24 +1,27 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
 # last Update date : 2026-10-22
-"""영상 프레임 + 그림 캔버스 (PLAN_DRAW_TAB 5.2, 13.2, 13.3, 16장).
+"""영상 프레임 + 그림 캔버스 (PLAN_DRAW_TAB 5.2, 13.2, 13.3, 16장, 19장).
 
-마우스: 좌드래그 = 현재 툴(draw: 스트로크 / erase: 지우기), 가운데 드래그 = 스크럽, 우버튼 = 없음.
-스트로크 좌표 · 두께는 소스 픽셀 단위로 문서에 들어가고, 화면 변환은 video_rect 하나로 한다.
+마우스: 좌드래그 = 현재 툴(draw: 스트로크 / erase: 지우기), 가운데 드래그 = 스크럽, 우드래그 = 보기 이동(pan),
+휠 = 커서 자리를 고정한 채 보기 확대 · 축소, 우버튼 더블클릭 = 보기 되돌리기.
+스트로크 좌표 · 두께는 소스 픽셀 단위로 문서에 들어가고, 화면 변환은 video_rect 하나로 한다 — 보기 배율 · 이동은
+그 사각형(geometry.view_rect)만 바꾸므로 그리기 · 지우기 · 고스트 · 툴 크기 원이 모두 따라온다.
 보기 반전(set_flip)은 영상과 저장된 스트로크를 같은 거울 변환으로 그리고, 마우스 → 소스 변환에서 축을 되돌린다.
-문서 · 저장 파일 · 내보내기는 반전과 무관하게 원본 픽셀 그대로다.
+문서 · 저장 파일 · 내보내기는 반전 · 배율 · 이동과 무관하게 원본 픽셀 그대로다.
 """
 from __future__ import annotations
 
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QTransform
+from PySide6.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QTransform,
+                           QWheelEvent)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ....config import constants as C
 from ....core.drawing import DrawingDocument, Stroke, erase_strokes
-from .geometry import fit_rect, flip_label, scrub_delta, to_screen, to_video
+from .geometry import clamp_pan, flip_label, scrub_delta, to_screen, to_video, view_rect, zoom_about, zoom_label
 from .stroke_painter import paint_frame
 
 
@@ -29,6 +32,7 @@ class VideoCanvas(QWidget):
     scrub_delta = Signal(int)               # 누적 프레임 오프셋 (시작 프레임 기준)
     scrub_finished = Signal()
     draw_pressed_while_playing = Signal()   # 컨트롤러가 pause() 한다
+    view_changed = Signal()                 # 보기 배율 · 이동이 바뀜 (zoom, pan)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -54,6 +58,8 @@ class VideoCanvas(QWidget):
         self._message = ""
         self._flip_h = False
         self._flip_v = False
+        self._zoom = 1.0                        # 보기 배율 (1 = 위젯에 맞춤)
+        self._pan = (0.0, 0.0)                  # 영상 중심 − 위젯 중심 (px)
         # 입력 상태
         self._live_points: list[QPointF] = []
         self._erase_preview: list[Stroke] | None = None
@@ -62,6 +68,9 @@ class VideoCanvas(QWidget):
         self._scrubbing = False
         self._scrub_x0 = 0.0
         self._scrub_last = 0
+        self._panning = False
+        self._pan_origin = QPointF()
+        self._pan_start = (0.0, 0.0)
         self._mouse: QPointF | None = None
 
     # ================================================================== 설정 API
@@ -92,6 +101,7 @@ class VideoCanvas(QWidget):
         self._loading = False
         self._src_w = self._src_h = 0
         self._message = message
+        self._set_view(1.0, (0.0, 0.0))
         self.update()
 
     def set_message(self, message: str) -> None:
@@ -99,6 +109,9 @@ class VideoCanvas(QWidget):
         self.update()
 
     def set_source_size(self, w: int, h: int) -> None:
+        if (int(w), int(h)) != (self._src_w, self._src_h):
+            # 크기가 다른 영상 — 보기 배율 · 이동은 그 영상의 것이므로 되돌린다 (해상도만 바꿔 다시 열면 그대로)
+            self._set_view(1.0, (0.0, 0.0))
         self._src_w, self._src_h = int(w), int(h)
         self._message = ""
         self.update()
@@ -144,16 +157,59 @@ class VideoCanvas(QWidget):
     def flip(self) -> tuple[bool, bool]:
         return self._flip_h, self._flip_v
 
+    # ------------------------------------------------------------------ 보기 배율 · 이동 (19장)
+    def view_zoom(self) -> float:
+        return self._zoom
+
+    def view_pan(self) -> tuple[float, float]:
+        return self._pan
+
+    def is_view_default(self) -> bool:
+        return abs(self._zoom - 1.0) < 1e-6 and self._pan == (0.0, 0.0)
+
+    def set_view_zoom(self, zoom: float, anchor: QPointF | None = None) -> None:
+        """보기 배율을 바꾼다. anchor(화면 좌표) 아래의 영상 자리는 그대로 두고, 없으면 위젯 중심 기준."""
+        if self._src_w <= 0 or self._src_h <= 0:
+            return
+        zoom = min(max(float(zoom), C.DRAW_VIEW_ZOOM_MIN), C.DRAW_VIEW_ZOOM_MAX)
+        if abs(zoom - 1.0) < 1e-6:
+            zoom = 1.0      # 1.25 ** n / 1.25 ** n 의 부동소수 찌꺼기가 배지 · 기본 판정을 흐리지 않게
+        if anchor is None:
+            anchor = QPointF(self.width() / 2.0, self.height() / 2.0)
+        w, h = self.width(), self.height()
+        pan = zoom_about(w, h, self._src_w, self._src_h, self._zoom, *self._pan, zoom, anchor.x(), anchor.y())
+        self._set_view(zoom, clamp_pan(w, h, self._src_w, self._src_h, zoom, *pan))
+
+    def set_view_pan(self, pan_x: float, pan_y: float) -> None:
+        if self._src_w <= 0 or self._src_h <= 0:
+            return
+        self._set_view(self._zoom, clamp_pan(self.width(), self.height(), self._src_w, self._src_h, self._zoom,
+                                             float(pan_x), float(pan_y)))
+
+    def reset_view(self) -> None:
+        """배율 1 · 이동 0 (위젯에 맞춤)."""
+        if self._panning:
+            self._panning = False
+            self._update_cursor()
+        self._set_view(1.0, (0.0, 0.0))
+
+    def _set_view(self, zoom: float, pan: tuple[float, float]) -> None:
+        if abs(zoom - self._zoom) < 1e-9 and abs(pan[0] - self._pan[0]) < 1e-9 and abs(pan[1] - self._pan[1]) < 1e-9:
+            return
+        self._zoom, self._pan = zoom, (float(pan[0]), float(pan[1]))
+        self.view_changed.emit()
+        self.update()
+
     def video_rect(self) -> QRectF:
         return QRectF(*self._rect())
 
     def is_busy(self) -> bool:
-        """그리기 · 지우기 · 스크럽 중."""
-        return bool(self._live_points) or self._erase_preview is not None or self._scrubbing
+        """그리기 · 지우기 · 스크럽 · 보기 이동 중."""
+        return bool(self._live_points) or self._erase_preview is not None or self._scrubbing or self._panning
 
     # ================================================================== 좌표
     def _rect(self) -> tuple[float, float, float, float]:
-        return fit_rect(self.width(), self.height(), self._src_w, self._src_h)
+        return view_rect(self.width(), self.height(), self._src_w, self._src_h, self._zoom, *self._pan)
 
     def _scale(self) -> float:
         r = self._rect()
@@ -228,9 +284,9 @@ class VideoCanvas(QWidget):
             p.setPen(QColor(C.Colors.TEXT_DIM))
             p.drawText(self.rect().adjusted(0, 0, -10, -8), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
                        "Loading…")
-        badge = flip_label(self._flip_h, self._flip_v)
+        badge = " · ".join(t for t in (flip_label(self._flip_h, self._flip_v), zoom_label(self._zoom)) if t)
         if badge:
-            # 거울상으로 보고 있다는 표시 (저장 · 내보내기는 원본 방향이다)
+            # 거울상 · 확대해서 보고 있다는 표시 (저장 · 내보내기는 원본 방향 · 원본 크기다)
             p.setPen(QColor(C.Colors.TEXT_DIM))
             p.drawText(self.rect().adjusted(0, 6, -10, 0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
                        badge)
@@ -238,9 +294,20 @@ class VideoCanvas(QWidget):
 
     # ================================================================== 마우스
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if not self._has_input() or self.is_busy():
+        if self.is_busy():
             return
         pos = event.position()
+        if event.button() == Qt.MouseButton.RightButton:
+            # 보기 이동 — 문서가 없어도(로딩 중) 영상 크기만 알면 된다
+            if self._src_w > 0 and self._src_h > 0:
+                self._panning = True
+                self._pan_origin = pos
+                self._pan_start = self._pan
+                self._update_cursor()
+                self.update()
+            return
+        if not self._has_input():
+            return
         if event.button() == Qt.MouseButton.MiddleButton:
             self._scrubbing = True
             self._scrub_x0 = pos.x()
@@ -265,6 +332,10 @@ class VideoCanvas(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         pos = event.position()
         self._mouse = pos
+        if self._panning:
+            self.set_view_pan(self._pan_start[0] + pos.x() - self._pan_origin.x(),
+                              self._pan_start[1] + pos.y() - self._pan_origin.y())
+            return
         if self._scrubbing:
             d = scrub_delta(pos.x(), self._scrub_x0, self._scrub_px)
             if d != self._scrub_last:
@@ -286,6 +357,12 @@ class VideoCanvas(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            if self._panning:
+                self._panning = False
+                self._update_cursor()
+                self.update()
+            return
         if event.button() == Qt.MouseButton.MiddleButton and self._scrubbing:
             self._scrubbing = False
             self._update_cursor()
@@ -306,6 +383,22 @@ class VideoCanvas(QWidget):
                 self.erase_finished.emit(result)
             self.update()
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            # 두 번째 누름은 이동을 시작하지 않고 보기를 되돌린다 (뒤따르는 release 는 panning 이 꺼져 있어 무시된다)
+            self.reset_view()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        """휠 = 커서 자리를 고정한 채 보기 확대 · 축소. 그리는 중 · 스크럽 중에는 무시한다 (화면 좌표로 모으는 점이 틀어진다)."""
+        dy = event.angleDelta().y()
+        if dy == 0 or self._src_w <= 0 or self._src_h <= 0 or self.is_busy():
+            event.ignore()
+            return
+        self.set_view_zoom(self._zoom * (C.DRAW_VIEW_ZOOM_STEP ** (dy / 120.0)), event.position())
+        event.accept()
+
     def leaveEvent(self, _event) -> None:  # noqa: N802
         self._mouse = None
         self.update()
@@ -316,7 +409,7 @@ class VideoCanvas(QWidget):
         return size / 2.0 * self._scale()
 
     def _show_tool_outline(self, vr: QRectF) -> bool:
-        return (self._mouse is not None and not self._scrubbing and self._has_input()
+        return (self._mouse is not None and not self._scrubbing and not self._panning and self._has_input()
                 and vr.contains(self._mouse))
 
     def _paint_tool_outline(self, p: QPainter, scale: float) -> None:
@@ -357,12 +450,14 @@ class VideoCanvas(QWidget):
         self._live_points = []
         self._erase_preview = None
         self._erase_last = None
-        if self._scrubbing:
-            self._scrubbing = False
+        if self._scrubbing or self._panning:
+            self._scrubbing = self._panning = False
             self._update_cursor()
 
     def _update_cursor(self) -> None:
-        if self._scrubbing:
+        if self._panning:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif self._scrubbing:
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         elif self._show_tool_outline(self.video_rect()):
             # 영상 위: 툴 크기 원이 커서를 대신한다
