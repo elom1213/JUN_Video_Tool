@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-22
 """Draw 탭 (PLAN_DRAW_TAB 5장, 13장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
@@ -130,6 +130,14 @@ class DrawTab(QWidget):
             tg.addAction(a)
         self.act_tool_draw.setChecked(True)
         self.act_ghost = self._act(None, "Toggle Ghosting", "G", lambda: self.ghost_panel.toggle())
+        # 보기 반전 (16장): 둘 다 켜면 상하좌우 모두. 그림 좌표 · 저장 · 내보내기는 원본 방향 그대로
+        self.act_flip_h = self._act("flip_h", "Flip Horizontal", "H", icon_text="Flip H")
+        self.act_flip_v = self._act("flip_v", "Flip Vertical", "V", icon_text="Flip V")
+        for a in (self.act_flip_h, self.act_flip_v):
+            a.setCheckable(True)
+            a.setToolTip(f"{a.text()} ({a.shortcut().toString()}). View only: drawings, saved files and exports "
+                         f"keep the original orientation")
+            a.toggled.connect(self._flip_changed)
 
         self.act_undo = self._act("undo", "Undo", "Ctrl+Z", self.undo)
         self.act_redo = self._act("redo", "Redo", "Ctrl+Y", self.redo)
@@ -161,6 +169,9 @@ class DrawTab(QWidget):
         tb.addAction(self.act_tool_draw)
         tb.addAction(self.act_tool_erase)
         tb.addSeparator()
+        tb.addAction(self.act_flip_h)
+        tb.addAction(self.act_flip_v)
+        tb.addSeparator()
         for a in (self.act_save, self.act_save_as, self.act_load):
             tb.addAction(a)
         tb.addSeparator()
@@ -171,11 +182,12 @@ class DrawTab(QWidget):
         self.autosave_check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         tb.addWidget(self.autosave_check)
         # 1280 px 폭에 툴바가 다 들어가도록 일부는 아이콘만 보인다 (툴팁 · 메뉴에 이름이 있다)
-        for a in (self.act_remove, self.act_clear_list, self.act_view_list, self.act_view_thumbs):
+        for a in (self.act_remove, self.act_clear_list, self.act_view_list, self.act_view_thumbs,
+                  self.act_flip_h, self.act_flip_v):
             btn = tb.widgetForAction(a)
             if btn is not None:
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                btn.setToolTip(a.text())
+                btn.setToolTip(a.toolTip())    # 툴팁을 안 정한 액션은 이름이 툴팁이다
         for btn in tb.findChildren(QWidget):
             if btn.metaObject().className() == "QToolButton":
                 btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -312,7 +324,7 @@ class DrawTab(QWidget):
     def menu_actions(self) -> list[QAction | None]:
         return [self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                 self.act_last, self.act_prev_drawn, self.act_next_drawn, None,
-                self.act_tool_draw, self.act_tool_erase, self.act_ghost, None,
+                self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
                 self.act_cache_whole, self.act_free_cache, None,
@@ -388,6 +400,8 @@ class DrawTab(QWidget):
         self.audio.set_volume(volume)
         self.audio.set_muted(muted)
         self.autosave_check.setChecked(bool(s.get("draw/autosave", False, bool)))
+        self.act_flip_h.setChecked(bool(s.get("draw/flip_h", False, bool)))
+        self.act_flip_v.setChecked(bool(s.get("draw/flip_v", False, bool)))
         # 영상이 아직 안 열렸을 때 불린다 — 이후 여는 영상부터 이 해상도로 디코드한다
         self._decode_scale = normalize_scale(s.get("draw/decode_scale", C.DRAW_DECODE_SCALE_DEFAULT, int))
         self.cache_panel.set_scale(self._decode_scale)
@@ -410,6 +424,8 @@ class DrawTab(QWidget):
         s.set("draw/volume", self.transport.volume.value())
         s.set("draw/muted", self.transport.btn_mute.isChecked())
         s.set("draw/autosave", self.autosave_check.isChecked())
+        s.set("draw/flip_h", self.act_flip_h.isChecked())
+        s.set("draw/flip_v", self.act_flip_v.isChecked())
         s.set("draw/decode_scale", self._decode_scale)
 
     def _update_actions(self) -> None:
@@ -419,7 +435,7 @@ class DrawTab(QWidget):
         self.act_add_files.setEnabled(a and self._ffmpeg_ok)
         self.act_add_folder.setEnabled(a and self._ffmpeg_ok)
         for act in (self.act_remove, self.act_clear_list, self.act_view_list, self.act_view_thumbs,
-                    self.act_tool_draw, self.act_tool_erase, self.act_ghost):
+                    self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v):
             act.setEnabled(a)
         for act in (self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                     self.act_last, self.act_save_as, self.act_load, self.act_export):
@@ -810,6 +826,26 @@ class DrawTab(QWidget):
 
     def _set_tool(self, tool: str) -> None:
         self.canvas.set_tool(tool)
+
+    # ================================================================== 보기 반전
+    def flip(self) -> tuple[bool, bool]:
+        return self.act_flip_h.isChecked(), self.act_flip_v.isChecked()
+
+    def set_flip(self, flip_h: bool, flip_v: bool) -> None:
+        self.act_flip_h.setChecked(bool(flip_h))
+        self.act_flip_v.setChecked(bool(flip_v))
+
+    def _flip_changed(self, _checked: bool) -> None:
+        h, v = self.flip()
+        self.canvas.set_flip(h, v)
+        if h and v:
+            self.log.append("View flipped horizontally and vertically. Drawings, saved files and exports keep the "
+                            "original orientation.")
+        elif h or v:
+            self.log.append(f"View flipped {'horizontally' if h else 'vertically'}. Drawings, saved files and "
+                            f"exports keep the original orientation.")
+        else:
+            self.log.append("View flip off.")
 
     # ================================================================== 편집
     def _doc_changed(self) -> None:

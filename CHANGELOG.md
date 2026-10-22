@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — 2026-10-22
+
+- **Draw 탭 보기 반전**: 툴바 `Flip H` / `Flip V` 버튼, `Draw > Flip Horizontal`(`H`) · `Flip Vertical`(`V`).
+  둘 다 켜면 상하좌우 모두 반전. 영상과 그 위의 선이 함께 거울상으로 보이고, 반전 상태에서 그은 선도 마우스 자리에 그려진다.
+  **보기 전용**이다 — 문서의 스트로크 좌표 · `.draw.json` · `Export…` 결과는 원본 방향 그대로 (좌표 변환에서만 축을 되돌린다).
+  캔버스 오른쪽 위에 `Flipped H` / `Flipped V` / `Flipped H+V` 표시. 설정에 저장된다 (`draw/flip_h`, `draw/flip_v`).
+- `geometry.to_video` / `to_screen` 에 `flip_h` · `flip_v`, `flip_label`. `tests/test_draw_geometry.py` 4개, `dev/check_draw.py` [11].
+
 ## 0.4.0 — 2026-10-20
 
 - **WAV 출력 (JUN_JALI 용)**: Convert 탭 `Output format` 에 `WAV (JUN_JALI 44.1 kHz 16-bit mono)` 추가.

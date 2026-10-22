@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-22
 """Draw 탭 통합 검증 (PLAN_DRAW_TAB 9.2, 12장, 13.8). 오프스크린 Qt 로 실제 위젯을 돌린다.
 
     python dev/check_draw.py [--keep]
@@ -418,6 +418,117 @@ def main() -> int:
         check(pump(app, 5, lambda: cv2._image is not None and cv2._image.width() == 320), "frame shown at 320x180")
         cp.res_combo.setCurrentIndex(cp.res_combo.findData(100))
         check(pump(app, 5, lambda: cv2._image is not None and cv2._image.width() == 1280), "back to original")
+
+        print("[11] view flip (H / V / both)")
+        d2.controller.seek(30)
+        pump(app, 5, lambda: cv2._image_frame == 30)
+        d2.ghost_panel.set_state(False, 2, 2, 1.0)
+        d2.doc.clear_frame(30)
+        d2._doc_changed()
+        cv2.setFocus()
+        cv2.leaveEvent(None)
+        frame30 = pv.cached(30)
+
+        def close(a, b, tol=24):
+            return all(abs(x - y) <= tol for x, y in zip((a.red(), a.green(), a.blue()), (b.red(), b.green(), b.blue())))
+
+        def is_red(c):
+            return c.red() > 200 and c.green() < 80
+
+        def find_pair(cands):
+            """소스 픽셀 쌍 중 색이 확실히 다른 첫 쌍 (반전 전후 비교용)."""
+            for (ax, ay), (bx, by) in cands:
+                if not close(frame30.pixelColor(ax, ay), frame30.pixelColor(bx, by), 60):
+                    return (ax, ay), (bx, by)
+            return None
+
+        def sp(x, y):
+            return cv2.screen_point(x, y).toPoint()
+
+        # --- 좌우: 소스 (x, y) 와 거울상 (1280 - x, y) 의 색이 다른 자리를 고른다 (testsrc 윗부분 색 막대)
+        pair = find_pair([((x, y), (1280 - x, y)) for y in (100, 60, 200) for x in (100, 60, 200, 300)])
+        check(pair is not None, f"found a left/right probe pair {pair}")
+        (lx, ly), (rx, ry) = pair or ((100, 100), (1180, 100))
+        pL, pR = sp(lx, ly), sp(rx, ry)
+        plain = cv2.grab().toImage()
+        cL, cR = plain.pixelColor(pL), plain.pixelColor(pR)
+        QTest.keyClick(cv2, Qt.Key.Key_H)
+        pump(app, 0.1)
+        check(cv2.flip() == (True, False) and d2.act_flip_h.isChecked(), "H -> flip horizontal")
+        flipped = cv2.grab().toImage()
+        check(close(flipped.pixelColor(pL), cR) and close(flipped.pixelColor(pR), cL),
+              f"image mirrored left<->right ({cL.name()}/{cR.name()} -> "
+              f"{flipped.pixelColor(pL).name()}/{flipped.pixelColor(pR).name()})")
+        check(sp(lx, ly) == pR and sp(rx, ry) == pL, "screen_point follows the flip")
+        # 반전 중 소스 1080 → 280 자리(= 반전 전 화면의 200 → 1000 자리)에 긋는다: 문서에는 1080 → 280, 화면에는 마우스 자리
+        q1, q2 = cv2.screen_point(1080, 360), cv2.screen_point(280, 360)
+        QTest.mousePress(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q1.toPoint())
+        for k in range(1, 21):
+            QTest.mouseMove(cv2, QPoint(int(q1.x() + (q2.x() - q1.x()) * k / 20), int(q1.y())))
+        QTest.mouseRelease(cv2, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, q2.toPoint())
+        pump(app, 0.1)
+        st = d2.doc.strokes_at(30)
+        check(len(st) == 1 and abs(st[0].points[0][0] - 1080) < 3 and abs(st[0].points[-1][0] - 280) < 3
+              and abs(st[0].points[0][1] - 360) < 3,
+              f"stroke stored mirrored in source pixels ({st[0].points[0] if st else None} -> "
+              f"{st[0].points[-1] if st else None})")
+        cv2.leaveEvent(None)
+        near_q1 = QPoint(int(q1.x() + (q2.x() - q1.x()) * 0.1), int(q1.y()))     # 소스 1000 (반전 중 화면에선 q1 쪽)
+        check(is_red(cv2.grab().toImage().pixelColor(near_q1)),
+              f"stroke drawn under the mouse while flipped ({cv2.grab().toImage().pixelColor(near_q1).name()})")
+        # 반전을 끄면 스트로크는 소스 자리(280 ~ 1080)로 간다: 화면의 q1 쪽(소스 200)은 비고, 소스 1000 자리는 빨갛다
+        QTest.keyClick(cv2, Qt.Key.Key_H)
+        pump(app, 0.1)
+        check(cv2.flip() == (False, False), "H again -> flip off")
+        off = cv2.grab().toImage()
+        check(is_red(off.pixelColor(sp(1000, 360))) and is_red(off.pixelColor(sp(300, 360))),
+              f"unflipped: stroke at source x=300..1000 ({off.pixelColor(sp(1000, 360)).name()})")
+        old_spot = QPoint(int(q1.x() + (q2.x() - q1.x()) * 0.04), int(q1.y()))   # 반전 전 소스 232 (선 끝 280 밖)
+        check(not is_red(off.pixelColor(sp(200, 360))) and not is_red(off.pixelColor(old_spot)),
+              f"unflipped: nothing at source x=200 / old screen spot ({off.pixelColor(old_spot).name()})")
+        # --- 상하
+        pair = find_pair([((x, y), (x, 720 - y)) for x in (100, 640, 1000, 300) for y in (60, 100, 150, 250)])
+        check(pair is not None, f"found a top/bottom probe pair {pair}")
+        (tx, ty), (bx, by) = pair or ((640, 60), (640, 660))
+        pT, pB = sp(tx, ty), sp(bx, by)
+        plain = cv2.grab().toImage()
+        cT, cB = plain.pixelColor(pT), plain.pixelColor(pB)
+        QTest.keyClick(cv2, Qt.Key.Key_V)
+        pump(app, 0.1)
+        check(cv2.flip() == (False, True), "V -> flip vertical")
+        flipped = cv2.grab().toImage()
+        check(close(flipped.pixelColor(pT), cB) and close(flipped.pixelColor(pB), cT),
+              f"image mirrored top<->bottom ({cT.name()}/{cB.name()} -> "
+              f"{flipped.pixelColor(pT).name()}/{flipped.pixelColor(pB).name()})")
+        # --- 둘 다 (메뉴 액션으로 H 추가): 소스 (x, y) 자리에 (1280 - x, 720 - y) 가 보인다
+        pair = find_pair([((x, y), (1280 - x, 720 - y)) for x in (100, 300, 200) for y in (60, 100, 150, 250)])
+        check(pair is not None, f"found a diagonal probe pair {pair}")
+        (ax, ay), (dx, dy) = pair or ((100, 100), (1180, 620))
+        d2.set_flip(False, False)
+        pump(app, 0.1)
+        pA, pD = sp(ax, ay), sp(dx, dy)          # 반전 없는 화면 자리
+        plain = cv2.grab().toImage()
+        cA, cD = plain.pixelColor(pA), plain.pixelColor(pD)
+        d2.act_flip_v.trigger()
+        d2.act_flip_h.trigger()
+        pump(app, 0.1)
+        check(cv2.flip() == (True, True) and d2.act_flip_h.isChecked() and d2.act_flip_v.isChecked(),
+              "menu actions -> both axes")
+        both = cv2.grab().toImage()
+        check(close(both.pixelColor(pA), cD) and close(both.pixelColor(pD), cA),
+              f"image mirrored on both axes ({cA.name()}/{cD.name()} -> "
+              f"{both.pixelColor(pA).name()}/{both.pixelColor(pD).name()})")
+        check(sp(ax, ay) == pD, "screen_point follows both flips")
+        check("flipped horizontally and vertically" in d2.log.toPlainText(), "log line for both axes")
+        d2.save_settings()
+        check(d2.settings.get("draw/flip_h", False, bool) and d2.settings.get("draw/flip_v", False, bool),
+              "flip saved to settings")
+        d2.set_flip(False, False)
+        pump(app, 0.1)
+        check(cv2.flip() == (False, False) and "View flip off." in d2.log.toPlainText(), "set_flip(False, False)")
+        d2.doc.clear_frame(30)
+        d2._doc_changed()
+        d2.doc.dirty = False          # 안 그러면 close 가 저장 여부를 묻는 모달에서 멈춘다
         w2.close()
         pump(app, 0.5)
     finally:

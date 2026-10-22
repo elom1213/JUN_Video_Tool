@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
-"""영상 프레임 + 그림 캔버스 (PLAN_DRAW_TAB 5.2, 13.2, 13.3).
+# last Update date : 2026-10-22
+"""영상 프레임 + 그림 캔버스 (PLAN_DRAW_TAB 5.2, 13.2, 13.3, 16장).
 
 마우스: 좌드래그 = 현재 툴(draw: 스트로크 / erase: 지우기), 가운데 드래그 = 스크럽, 우버튼 = 없음.
 스트로크 좌표 · 두께는 소스 픽셀 단위로 문서에 들어가고, 화면 변환은 video_rect 하나로 한다.
+보기 반전(set_flip)은 영상과 저장된 스트로크를 같은 거울 변환으로 그리고, 마우스 → 소스 변환에서 축을 되돌린다.
+문서 · 저장 파일 · 내보내기는 반전과 무관하게 원본 픽셀 그대로다.
 """
 from __future__ import annotations
 
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen, QTransform
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ....config import constants as C
 from ....core.drawing import DrawingDocument, Stroke, erase_strokes
-from .geometry import fit_rect, scrub_delta, to_screen, to_video
+from .geometry import fit_rect, flip_label, scrub_delta, to_screen, to_video
 from .stroke_painter import paint_frame
 
 
@@ -50,6 +52,8 @@ class VideoCanvas(QWidget):
         self._scrub_px = C.DRAW_SCRUB_PX_PER_FRAME
         self._playing = False
         self._message = ""
+        self._flip_h = False
+        self._flip_v = False
         # 입력 상태
         self._live_points: list[QPointF] = []
         self._erase_preview: list[Stroke] | None = None
@@ -128,6 +132,18 @@ class VideoCanvas(QWidget):
     def set_playing(self, playing: bool) -> None:
         self._playing = bool(playing)
 
+    def set_flip(self, flip_h: bool, flip_v: bool) -> None:
+        """보기 반전 (좌우 · 상하). 그리던 입력은 버린다 — 축이 바뀌면 점들이 엉뚱한 자리로 간다."""
+        flip_h, flip_v = bool(flip_h), bool(flip_v)
+        if (flip_h, flip_v) == (self._flip_h, self._flip_v):
+            return
+        self._cancel_input()
+        self._flip_h, self._flip_v = flip_h, flip_v
+        self.update()
+
+    def flip(self) -> tuple[bool, bool]:
+        return self._flip_h, self._flip_v
+
     def video_rect(self) -> QRectF:
         return QRectF(*self._rect())
 
@@ -144,7 +160,16 @@ class VideoCanvas(QWidget):
         return r[3] / self._src_h if self._src_h else 1.0
 
     def _to_video(self, p: QPointF) -> tuple[float, float]:
-        return to_video(p.x(), p.y(), self._rect(), self._src_w, self._src_h)
+        return to_video(p.x(), p.y(), self._rect(), self._src_w, self._src_h, self._flip_h, self._flip_v)
+
+    def _flip_transform(self, vr: QRectF) -> QTransform:
+        """영상 사각형을 제자리에서 거울상으로 뒤집는 변환 (반전이 없으면 항등)."""
+        t = QTransform()
+        if self._flip_h or self._flip_v:
+            t.translate(vr.x() * 2 + vr.width() if self._flip_h else 0.0,
+                        vr.y() * 2 + vr.height() if self._flip_v else 0.0)
+            t.scale(-1.0 if self._flip_h else 1.0, -1.0 if self._flip_v else 1.0)
+        return t
 
     def _has_input(self) -> bool:
         return self._src_w > 0 and self._src_h > 0 and self._image is not None and self._doc is not None
@@ -163,6 +188,9 @@ class VideoCanvas(QWidget):
             return
         x, y, w, h = self._rect()
         vr = QRectF(x, y, w, h)
+        # 영상과 저장된 스트로크는 같은 거울 변환 아래 그린다 (보기 반전). 그 뒤는 화면 좌표 그대로
+        p.save()
+        p.setTransform(self._flip_transform(vr))
         if self._image is not None:
             if self._loading:
                 p.setOpacity(0.45)
@@ -177,6 +205,7 @@ class VideoCanvas(QWidget):
             p.setClipRect(vr)
             paint_frame(p, self._doc, self._frame, scale, x, y, ghost=self._ghost, current=self._erase_preview)
             p.restore()
+        p.restore()
 
         # 진행 중 스트로크 (화면 좌표 그대로)
         if self._live_points:
@@ -199,6 +228,12 @@ class VideoCanvas(QWidget):
             p.setPen(QColor(C.Colors.TEXT_DIM))
             p.drawText(self.rect().adjusted(0, 0, -10, -8), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
                        "Loading…")
+        badge = flip_label(self._flip_h, self._flip_v)
+        if badge:
+            # 거울상으로 보고 있다는 표시 (저장 · 내보내기는 원본 방향이다)
+            p.setPen(QColor(C.Colors.TEXT_DIM))
+            p.drawText(self.rect().adjusted(0, 6, -10, 0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+                       badge)
         p.end()
 
     # ================================================================== 마우스
@@ -337,5 +372,5 @@ class VideoCanvas(QWidget):
 
     def screen_point(self, vx: float, vy: float) -> QPointF:
         """테스트 · 디버그용: 소스 좌표 → 화면 좌표."""
-        sx, sy = to_screen(vx, vy, self._rect(), self._src_w, self._src_h)
+        sx, sy = to_screen(vx, vy, self._rect(), self._src_w, self._src_h, self._flip_h, self._flip_v)
         return QPointF(sx, sy)
