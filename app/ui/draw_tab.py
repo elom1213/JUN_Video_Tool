@@ -312,6 +312,7 @@ class DrawTab(QWidget):
         self.cache_panel.scale_changed.connect(self.set_decode_scale)
         # 캐시 구간: 타임라인 핸들과 스핀박스가 같은 값을 보여 준다 — 어느 쪽을 고쳐도 set_cache_range 로 모은다
         self.cache_panel.range_changed.connect(self.set_cache_range)
+        self.cache_panel.get_zoom_clicked.connect(self.cache_range_from_zoom)
         self.transport.cache_range_changed.connect(self.set_cache_range)
         # 타임라인 확대: 패널 스핀박스 · 버튼 · 메뉴가 모두 set_timeline_zoom 으로 모인다
         self.zoom_panel.zoom_changed.connect(self.set_timeline_zoom)
@@ -725,6 +726,11 @@ class DrawTab(QWidget):
             else:
                 self.log.append(f"Timeline zoomed to frames {zoom[0]}-{zoom[1]}.")
         self._update_actions()
+
+    def cache_range_from_zoom(self) -> None:
+        """캐시 구간 = 지금 타임라인에 펼쳐진 구간 (Get Zoom 버튼). zoom_to_cache_range 의 반대 방향."""
+        if self.controller.item() is not None:
+            self.set_cache_range(*self._zoom)
 
     def zoom_to_cache_range(self) -> None:
         if self.controller.item() is not None:

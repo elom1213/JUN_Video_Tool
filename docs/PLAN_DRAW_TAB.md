@@ -946,3 +946,11 @@ EXPORT_SUFFIX = "_draw"
 
 검증: `dev/check_draw.py` [13] — 오른쪽 그립 70 → 100 (패널 · 슬라이더 양 끝 따라옴), 가운데 +100 이동 (폭 유지), 왼쪽 그립을 오른쪽 너머로 → 두 프레임,
 더블클릭 → 전체. 실제 창 캡처로 위 타임라인과 자리 일치 확인.
+
+### 18.2 추가 요청 (같은 날, v0.4.5) — Get Zoom
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C7 | `Range` 의 `All` 옆에 `Get Zoom` 버튼: 누르면 `Show` 의 확대 구간 시작 · 끝이 `Range` 에 들어가게 | `CachePanel.get_zoom_btn` → `get_zoom_clicked` → `DrawTab.cache_range_from_zoom()` = `set_cache_range(*self._zoom)` (기존 단일 진입점이라 스핀 · 타임라인 핸들 · 버튼 문구 · 현황이 같이 바뀐다). 영상이 있으면 활성 |
+
+검증: `dev/check_draw.py` [13] — 확대 120-180 에서 `Get Zoom` → 캐시 구간 (120, 180), 스핀 · 핸들 일치, `Zoom to Cache Range` 비활성(같음), `61 frames`.

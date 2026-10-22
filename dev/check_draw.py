@@ -659,6 +659,17 @@ def main() -> int:
         zp.reset_btn.click()
         pump(app, 0.1)
         check(d2.timeline_zoom() == (0, 299), "panel Reset -> whole")
+        # Get Zoom: 캐시 구간 = 확대 구간 (Zoom to Cache Range 의 반대)
+        d2.set_timeline_zoom(120, 180)
+        pump(app, 0.1)
+        check(d2.cache_range() == (100, 150), f"cache range before Get Zoom {d2.cache_range()}")
+        cp.get_zoom_btn.click()
+        pump(app, 0.1)
+        check(d2.cache_range() == (120, 180) and cp.cache_range() == (120, 180) and sl.cache_range() == (120, 180),
+              f"Get Zoom -> cache range {d2.cache_range()}, spins {cp.cache_range()}, handles {sl.cache_range()}")
+        check(not d2.act_zoom_cache.isEnabled() and not zp.fit_btn.isEnabled(), "zoom-to-cache off: already equal")
+        check(cp.cache_btn.text() == "Cache Range" and cp.range_info.text().startswith("61 frames"),
+              f"panel: {cp.cache_btn.text()} / {cp.range_info.text()}")
         # 범위 슬라이더 (타임라인 아래): 그립 드래그 = 크기, 가운데 드래그 = 이동, 더블클릭 = 전체. 패널 스핀이 따라온다
         rs = tr.range_slider
         d2.set_timeline_zoom(50, 70)

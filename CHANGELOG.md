@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5 — 2026-10-22
+
+- **`Get Zoom` 버튼** (`Resolution & Cache` 패널 `Range` 행, `All` 옆): 누르면 지금 타임라인에 펼쳐진 확대 구간
+  (`Timeline Zoom` 의 `Show` 시작 · 끝) 이 캐시 구간의 시작 · 끝에 들어간다. `Zoom to Cache Range` 의 반대 방향.
+  스핀박스 · 타임라인 핸들 · 버튼 문구(`Cache Range`)가 같이 바뀐다.
+- `CachePanel.get_zoom_clicked`, `DrawTab.cache_range_from_zoom`. `dev/check_draw.py` [13].
+
 ## 0.4.4 — 2026-10-22
 
 - **타임라인 확대를 끌어서 설정** (마야 Range Slider 꼴): 타임라인 바로 아래에 영상 전체를 나타내는 띠가 생기고, 그 위의 주황 창이

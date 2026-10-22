@@ -27,6 +27,7 @@ class CachePanel(QGroupBox):
     free_clicked = Signal()      # 모든 영상의 캐시 해제
     scale_changed = Signal(int)  # 디코드 해상도 (원본의 %)
     range_changed = Signal(int, int)   # 스핀박스로 캐시 구간을 바꿈 (start, end)
+    get_zoom_clicked = Signal()        # 캐시 구간 = 지금 타임라인 확대 구간 (Timeline Zoom 의 Show)
 
     def __init__(self, parent=None) -> None:
         super().__init__("Resolution && Cache", parent)
@@ -49,7 +50,10 @@ class CachePanel(QGroupBox):
             sp.setToolTip(tip)
         self.all_btn = QPushButton("All")
         self.all_btn.setToolTip("Cache range = whole video")
-        self.all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.get_zoom_btn = QPushButton("Get Zoom")
+        self.get_zoom_btn.setToolTip("Cache range = the frames shown on the timeline (Timeline Zoom > Show)")
+        for b in (self.all_btn, self.get_zoom_btn):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.range_info = QLabel()
         self.range_info.setObjectName("HintLabel")
         self.video_label = QLabel()
@@ -86,6 +90,7 @@ class CachePanel(QGroupBox):
         rng_row.addWidget(QLabel("–"))
         rng_row.addWidget(self.end_spin, 1)
         rng_row.addWidget(self.all_btn)
+        rng_row.addWidget(self.get_zoom_btn)
         lay.addLayout(rng_row)
         lay.addWidget(self.range_info)
         lay.addWidget(self.video_label)
@@ -104,6 +109,7 @@ class CachePanel(QGroupBox):
         self.start_spin.valueChanged.connect(self._spin_changed)
         self.end_spin.valueChanged.connect(self._spin_changed)
         self.all_btn.clicked.connect(lambda: self.range_changed.emit(0, self.end_spin.maximum()))
+        self.get_zoom_btn.clicked.connect(self.get_zoom_clicked)
         self._last = -1
         self.set_source_size(0, 0)
         self.set_range_bounds(-1)
@@ -120,6 +126,7 @@ class CachePanel(QGroupBox):
             sp.setEnabled(has)
             sp.blockSignals(False)
         self.all_btn.setEnabled(has)
+        self.get_zoom_btn.setEnabled(has)
         if not has:
             self.set_cache_range(0, 0)
 
