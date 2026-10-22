@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """캔버스 좌표 변환 · 스크럽 (PLAN_DRAW_TAB 7장)."""
-from app.ui.widgets.draw.geometry import fit_rect, flip_label, scrub_delta, to_screen, to_video
+from app.ui.widgets.draw.geometry import fit_rect, flip_label, normalize_zoom, scrub_delta, to_screen, to_video
 
 
 def test_fit_rect_letterbox():
@@ -67,3 +67,13 @@ def test_flip_label():
     assert flip_label(True, False) == "Flipped H"
     assert flip_label(False, True) == "Flipped V"
     assert flip_label(True, True) == "Flipped H+V"
+
+
+def test_normalize_zoom():
+    assert normalize_zoom(50, 70, 999) == (50, 70)
+    assert normalize_zoom(70, 50, 999) == (50, 70)            # 뒤집힌 입력
+    assert normalize_zoom(-10, 5000, 999) == (0, 999)          # 클램프
+    assert normalize_zoom(60, 60, 999) == (60, 61)             # 한 프레임은 못 보여 준다 → 둘
+    assert normalize_zoom(999, 999, 999) == (998, 999)         # 끝에서는 시작을 물린다
+    assert normalize_zoom(0, 0, 0) == (0, 0)                   # 프레임 하나짜리 영상
+    assert normalize_zoom(3, 7, -1) == (0, 0)                  # 영상 없음

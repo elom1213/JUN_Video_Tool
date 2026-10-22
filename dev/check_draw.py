@@ -29,7 +29,7 @@ os.environ["JUN_VIDEO_TOOL_SETTINGS_SCOPE"] = "JUN_Video_Tool_check_draw"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import QPoint, QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QSettings, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -582,6 +582,92 @@ def main() -> int:
         check(f"This video: {b - 100 + 1} of 300 frames cached." == cp.video_label.text(), f"panel: {cp.video_label.text()}")
         cp.free_btn.click()
         pump(app, 0.2)
+
+        print("[13] timeline zoom")
+        zp, tr = d2.zoom_panel, d2.transport
+        check(d2.timeline_zoom() == (0, 299) and (sl.minimum(), sl.maximum()) == (0, 299), "new video: whole timeline")
+        check(tr.zoom_lo_label.text() == "0" and tr.zoom_hi_label.text() == "299" and zp.info.text() == "Whole video",
+              f"labels {tr.zoom_lo_label.text()} / {tr.zoom_hi_label.text()} / {zp.info.text()}")
+        check(not d2.act_zoom_reset.isEnabled() and not zp.reset_btn.isEnabled(), "reset disabled when whole")
+        d2.controller.seek(60)
+        pump(app, 3, lambda: cv2._image_frame == 60)
+        # 패널 스핀박스 → 타임라인 양 끝
+        zp.start_spin.setValue(50)
+        zp.end_spin.setValue(70)
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (50, 70) and (sl.minimum(), sl.maximum()) == (50, 70),
+              f"spin boxes 50-70 -> timeline ends {(sl.minimum(), sl.maximum())}")
+        check(tr.zoom_lo_label.text() == "50" and tr.zoom_hi_label.text() == "70" and zp.info.text() == "21 of 300 frames",
+              f"labels {tr.zoom_lo_label.text()} / {tr.zoom_hi_label.text()} / {zp.info.text()}")
+        check(sl.value() == 60 and tr.spin.value() == 60, "playhead at 60 inside the zoom")
+        check("Timeline zoomed to frames 50-70." in d2.log.toPlainText(), "log line")
+        # 확대된 타임라인에서 핸들 드래그 = 그 범위 안의 프레임으로 시크 (그루브 클릭은 QSlider 기본대로 페이지 이동)
+        ym = sl.height() // 2 + 2
+        x60, x55 = int(sl._xpos(60)), int(sl._xpos(55))
+        QTest.mousePress(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x60, ym))
+        QTest.mouseMove(sl, QPoint(x55, ym))
+        QTest.mouseRelease(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x55, ym))
+        pump(app, 0.3)
+        check(abs(d2.controller.frame() - 55) <= 1, f"drag playhead on zoomed timeline -> frame {d2.controller.frame()}")
+        # 범위 밖 프레임: 핸들은 가장자리, 스핀 · 타임코드는 실제 프레임
+        d2.controller.seek(20)
+        pump(app, 3, lambda: cv2._image_frame == 20)
+        check(d2.controller.frame() == 20 and tr.spin.value() == 20 and sl.value() == 50,
+              f"frame 20 outside zoom: spin {tr.spin.value()}, slider handle at {sl.value()}")
+        QTest.keyClick(cv2, Qt.Key.Key_Right)
+        pump(app, 1, lambda: d2.controller.frame() == 21)
+        check(d2.controller.frame() == 21, "stepping outside the zoom still works")
+        # 시작을 끝까지 올리면 끝이 따라간다 / 끝을 시작 아래로 내리면 시작이 따라간다
+        zp.start_spin.setValue(70)
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (70, 71), f"start spin 70 -> {d2.timeline_zoom()}")
+        zp.end_spin.setValue(30)
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (29, 30), f"end spin 30 -> {d2.timeline_zoom()}")
+        # 캐시 구간 핸들: 범위 밖이면 안 그려지고 안 잡힌다, 범위 안이면 끌 수 있다
+        d2.set_cache_range(10, 200)
+        d2.set_timeline_zoom(50, 70)
+        pump(app, 0.1)
+        check(sl._handle_hit(QPointF(sl._xpos(50), 5)) is None and sl._handle_hit(QPointF(sl._xpos(70), 5)) is None,
+              "cache handles outside the zoom are not grabbable at the edges")
+        d2.set_cache_range(55, 65)
+        pump(app, 0.1)
+        check(sl._handle_hit(QPointF(sl._xpos(65), 5)) == "end", "cache handle inside the zoom is grabbable")
+        x65, x68 = int(sl._xpos(65)), int(sl._xpos(68))
+        QTest.mousePress(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x65, 5))
+        QTest.mouseMove(sl, QPoint(x68, 5))
+        QTest.mouseRelease(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x68, 5))
+        pump(app, 0.1)
+        check(d2.cache_range()[0] == 55 and abs(d2.cache_range()[1] - 68) <= 1 and cp.cache_range() == d2.cache_range(),
+              f"drag cache handle while zoomed -> {d2.cache_range()}")
+        # Zoom to Cache Range (Z) / Reset (Shift+Z)
+        d2.set_cache_range(100, 150)
+        check(d2.act_zoom_cache.isEnabled() and zp.fit_btn.isEnabled(), "zoom-to-cache enabled when it differs")
+        cv2.setFocus()
+        QTest.keyClick(cv2, Qt.Key.Key_Z)
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (100, 150) and zp.zoom() == (100, 150) and (sl.minimum(), sl.maximum()) == (100, 150),
+              f"Z -> zoom to cache range {d2.timeline_zoom()}")
+        check(not d2.act_zoom_cache.isEnabled() and d2.act_zoom_reset.isEnabled(), "actions: fit off, reset on")
+        QTest.keyClick(cv2, Qt.Key.Key_Z, Qt.KeyboardModifier.ShiftModifier)
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (0, 299) and zp.zoom() == (0, 299) and tr.zoom_hi_label.text() == "299",
+              f"Shift+Z -> whole {d2.timeline_zoom()}")
+        zp.fit_btn.click()
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (100, 150), "panel button -> zoom to cache range")
+        zp.reset_btn.click()
+        pump(app, 0.1)
+        check(d2.timeline_zoom() == (0, 299), "panel Reset -> whole")
+        # 해상도를 바꿔 다시 열어도 확대는 남는다
+        d2.set_timeline_zoom(50, 70)
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(50))
+        pump(app, 3, lambda: cv2._image is not None and cv2._image.width() == 640)
+        check(d2.timeline_zoom() == (50, 70) and (sl.minimum(), sl.maximum()) == (50, 70), "zoom survives resolution change")
+        cp.res_combo.setCurrentIndex(cp.res_combo.findData(100))
+        pump(app, 3, lambda: cv2._image is not None and cv2._image.width() == 1280)
+        d2.reset_timeline_zoom()
+        d2.set_cache_range(0, 299)
         w2.close()
         pump(app, 0.5)
     finally:

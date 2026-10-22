@@ -48,6 +48,26 @@ def to_screen(vx: float, vy: float, rect: Rect, src_w: float, src_h: float,
     return x + vx / src_w * w, y + vy / src_h * h
 
 
+def normalize_zoom(lo: int, hi: int, last: int) -> tuple[int, int]:
+    """타임라인 확대 구간 [lo, hi] 를 0 ~ last 로 클램프하고 hi > lo (프레임 둘 이상) 를 보장한다 (18장).
+
+    last < 1 이면 확대할 것이 없으므로 (0, max(0, last)).
+    """
+    last = int(last)
+    if last < 1:
+        return 0, max(0, last)
+    lo = max(0, min(int(lo), last))
+    hi = max(0, min(int(hi), last))
+    if lo > hi:
+        lo, hi = hi, lo
+    if hi == lo:
+        if hi < last:
+            hi += 1
+        else:
+            lo -= 1
+    return lo, hi
+
+
 def flip_label(flip_h: bool, flip_v: bool) -> str:
     """캔버스 구석 배지 문구. 반전이 없으면 ""."""
     if flip_h and flip_v:

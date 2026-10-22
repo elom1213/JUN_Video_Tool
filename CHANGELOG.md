@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.3 — 2026-10-22
+
+- **Draw 탭 타임라인 확대**: 타임라인 양 끝을 영상의 처음 · 끝이 아니라 원하는 프레임 `[lo, hi]` 로 둘 수 있다
+  (1000 프레임 영상에서 50 ~ 70 만 타임라인 전체에 펼쳐 보기).
+  - 사이드 패널 `Timeline Zoom`: `Show` 시작 · 끝 프레임 스핀박스(정수), `Zoom to Cache Range`, `Reset`.
+    시작을 끝까지 올리면 끝이 한 칸 따라가고 반대도 같다 (최소 두 프레임).
+  - `Draw > Zoom Timeline to Cache Range`(`Z`) · `Reset Timeline Zoom`(`Shift+Z`).
+  - 타임라인 양 옆에 끝 프레임 번호가 보이고, 확대 중이면 주황색. 그림 마커 · 캐시 녹색 줄 · 캐시 구간 핸들은 보이는 범위만 그린다
+    (범위 밖 캐시 핸들은 그리지도 잡히지도 않는다 — 가장자리에 붙이면 자리가 거짓이 된다).
+  - 확대는 보기만 바꾼다: 재생 · 프레임 이동 · `Home` / `End` 는 영상 전체 기준 그대로이고, 재생 위치가 범위 밖이면
+    핸들은 가장자리에 붙고 프레임 칸 · 타임코드는 실제 프레임을 보여 준다. 해상도를 바꿔도 남고, 영상을 새로 열면 전체로.
+- `geometry.normalize_zoom`, `widgets/draw/zoom_panel.py`, `TransportBar.set_zoom`. `tests/test_draw_geometry.py` 1개, `dev/check_draw.py` [13].
+
 ## 0.4.2 — 2026-10-22
 
 - **Draw 탭 캐시 구간**: 영상 전체가 아니라 원하는 프레임 구간만 메모리에 올릴 수 있다.

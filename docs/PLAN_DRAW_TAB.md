@@ -910,3 +910,26 @@ EXPORT_SUFFIX = "_draw"
 검증: `pytest` 151개 (`normalize_cache_range`, `plan_cache_window` 전체 · 부분 · 구간 밖 현재 프레임 · 빈 구간),
 `dev/check_draw.py` [12] — 스핀박스 100-150 → 핸들, 끝 핸들 드래그 → 스핀박스, 드래그가 시크하지 않음, 시작 핸들이 끝에서 멈춤,
 구간만 캐시 → `pinned_ranges == [(100, b)]` · `This range: all n frames cached.`, 시작 스핀 250 → 끝이 따라옴, `All` → 전체.
+
+---
+
+## 18. 2026-10-22 추가 요청 (v0.4.3) — 타임라인 확대
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C5 | 타임라인 양 끝이 영상 처음 · 끝이 아니라 지정한 구간 (예: 1000 프레임 중 50 ~ 70) 이 되게 | `TransportBar.set_zoom(lo, hi)` = `slider.setRange(lo, hi)`. 슬라이더 양 옆 `zoom_lo_label` · `zoom_hi_label` (확대 중 ACCENT). `ZoomPanel`(`widgets/draw/zoom_panel.py`): `Show` 시작 · 끝 스핀박스 + `Zoom to Cache Range` + `Reset`. Draw 메뉴 `Zoom Timeline to Cache Range`(`Z`) · `Reset Timeline Zoom`(`Shift+Z`) |
+
+**설계**
+- 주인은 `DrawTab._zoom`. 패널 스핀 · 버튼 · 메뉴 · 코드가 모두 `set_timeline_zoom(lo, hi)` 로 모이고, `normalize_zoom`
+  (클램프 · `hi > lo` 보장, 한 프레임짜리는 둘로 늘림) 뒤 패널(신호 없음)과 트랜스포트를 맞춘다.
+- 확대는 **보기만** 바꾼다. `PlaybackController` · 프레임 스핀(0 ~ last) · `Home`/`End` · 스크럽은 그대로. 재생 위치가 범위 밖이면
+  `QSlider.setValue` 가 가장자리로 클램프하고 (`_updating` 가드라 시크는 안 난다) 스핀 · 타임코드는 실제 프레임.
+- `_MarkerSlider` 는 범위 밖을 그리지 않는다: 마커 점 · 캐시 녹색 줄(잘라서) · 캐시 구간 띠(잘라서). **범위 밖 캐시 핸들은
+  그리지도 잡히지도 않는다** (`_visible`). 범위 안 핸들 드래그는 그대로이고 범위 밖으로는 못 나간다.
+- `TransportBar.set_range(last)` 는 확대를 전체로 되돌린다. 해상도 변경으로 다시 열 때는 `DrawTab` 이 `set_zoom` 을 다시 건다.
+  실제 길이가 짧아지면(`range_changed`) 확대를 잘라 유지한다. 영상을 새로 열면 전체.
+- 설정에 저장하지 않는다 (영상마다 다르다).
+
+검증: `pytest` 152개 (`normalize_zoom`), `dev/check_draw.py` [13] ALL OK — 스핀 50-70 → 슬라이더 양 끝 50 · 70 · 라벨 · `21 of 300 frames`,
+확대된 타임라인 클릭 → 그 프레임, 범위 밖 프레임 20 에서 스핀 20 · 핸들 50, `→` 이동 정상, 시작 70 → (70, 71), 끝 30 → (29, 30),
+범위 밖 캐시 핸들 안 잡힘 · 안 핸들 드래그, `Z` / `Shift+Z` / 패널 버튼, 해상도 변경 뒤 유지.

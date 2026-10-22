@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
 # last Update date : 2026-10-22
-"""트랜스포트 바 (PLAN_DRAW_TAB 5.5, 13.1, 17장): 버튼 · 타임라인(그림 마커 · 캐시 구간 핸들) · 프레임 스핀 · 타임코드 · 음량."""
+"""트랜스포트 바 (PLAN_DRAW_TAB 5.5, 13.1, 17장, 18장): 버튼 · 타임라인(그림 마커 · 캐시 구간 핸들 · 확대) · 프레임 스핀 ·
+타임코드 · 음량.
+
+타임라인 확대(set_zoom): 슬라이더의 범위가 영상 전체가 아니라 [lo, hi] 가 된다. 재생 위치가 그 밖이면 핸들은 가장자리에 붙고,
+프레임 스핀 · 타임코드는 실제 프레임을 보여 준다. 마커 · 캐시 줄 · 구간 핸들은 보이는 범위만 그린다.
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
@@ -73,13 +78,18 @@ class _MarkerSlider(QSlider):
         lo, hi, span, half = self._geom()
         return QStyle.sliderValueFromPosition(lo, hi, int(round(x - half)), span)
 
+    def _visible(self, f: int) -> bool:
+        """확대된 범위 안에 있어 그려지는 프레임인가."""
+        return self.minimum() <= f <= self.maximum()
+
     def _handle_hit(self, pos: QPointF) -> str | None:
-        """위쪽 띠 안의 좌표가 어느 핸들 위인지. 둘이 겹쳐 있으면 마우스가 있는 쪽을 고른다."""
+        """위쪽 띠 안의 좌표가 어느 핸들 위인지. 둘이 겹쳐 있으면 마우스가 있는 쪽을 고른다. 범위 밖 핸들은 안 잡힌다."""
         if self._range is None or pos.y() > self.RANGE_STRIP_H or self.maximum() <= self.minimum():
             return None
         a, b = self._range
         xa, xb = self._xpos(a), self._xpos(b)
-        da, db = abs(pos.x() - xa), abs(pos.x() - xb)
+        da = abs(pos.x() - xa) if self._visible(a) else float("inf")
+        db = abs(pos.x() - xb) if self._visible(b) else float("inf")
         if min(da, db) > self.GRAB_PX:
             return None
         if da == db:
@@ -144,19 +154,25 @@ class _MarkerSlider(QSlider):
         super().paintEvent(event)
         if not (self._markers or self._cached or self._range is not None) or self.maximum() <= self.minimum():
             return
+        lo, hi = self.minimum(), self.maximum()
         p = QPainter(self)
         p.setPen(Qt.PenStyle.NoPen)
         strip = self.RANGE_STRIP_H
         if self._range is not None:
             a, b = self._range
-            x0, x1 = self._xpos(a), self._xpos(b)
-            band = QColor(C.Colors.ACCENT)
-            band.setAlpha(70)
-            p.setBrush(band)
-            p.drawRect(int(x0), 3, max(1, int(x1 - x0) + 1), strip - 5)
+            ca, cb = max(a, lo), min(b, hi)         # 보이는 부분만 (확대 중이면 잘린다)
+            if ca <= cb:
+                x0, x1 = self._xpos(ca), self._xpos(cb)
+                band = QColor(C.Colors.ACCENT)
+                band.setAlpha(70)
+                p.setBrush(band)
+                p.drawRect(int(x0), 3, max(1, int(x1 - x0) + 1), strip - 5)
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             hw = self.HANDLE_W / 2
-            for key, x in (("start", x0), ("end", x1)):
+            for key, f in (("start", a), ("end", b)):
+                if not self._visible(f):
+                    continue                        # 범위 밖 핸들은 그리지 않는다 (가장자리에 붙이면 자리가 거짓이 된다)
+                x = self._xpos(f)
                 active = self._drag == key or (self._drag is None and self._hover == key)
                 p.setBrush(QColor(C.Colors.TEXT if active else C.Colors.ACCENT))
                 # 아래를 향한 삼각형: 꼭짓점이 그 프레임 자리
@@ -165,13 +181,17 @@ class _MarkerSlider(QSlider):
         if self._cached:
             p.setBrush(QColor(C.Colors.OK))
             for a, b in self._cached:
+                a, b = max(a, lo), min(b, hi)
+                if a > b:
+                    continue
                 x0, x1 = int(self._xpos(a)), int(self._xpos(b))
                 p.drawRect(x0, strip + 1, max(1, x1 - x0 + 1), 2)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setBrush(QColor(C.Colors.ACCENT))
         y = self.height() - 3
         for f in self._markers:
-            p.drawEllipse(int(self._xpos(f)) - 2, y - 2, 4, 4)
+            if self._visible(f):
+                p.drawEllipse(int(self._xpos(f)) - 2, y - 2, 4, 4)
         p.end()
 
 
@@ -208,6 +228,15 @@ class TransportBar(QWidget):
         self.btn_next_drawn = _tool_button("next_drawn", "Next Drawn Frame (Ctrl+Right)")
         self.slider = _MarkerSlider()
         self.slider.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        # 타임라인 양 끝 프레임 번호. 확대 중이면 주황으로 눈에 띈다
+        self.zoom_lo_label = QLabel("0")
+        self.zoom_hi_label = QLabel("0")
+        for lb in (self.zoom_lo_label, self.zoom_hi_label):
+            lb.setObjectName("HintLabel")
+            lb.setToolTip("Frame at this end of the timeline (Timeline Zoom)")
+        self.zoom_lo_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._last = 0
+        self._zoom = (0, 0)
         self.spin = QSpinBox()
         self.spin.setKeyboardTracking(False)
         self.spin.setMinimumWidth(70)
@@ -231,7 +260,9 @@ class TransportBar(QWidget):
         lay.addSpacing(6)
         lay.addWidget(self.btn_prev_drawn)
         lay.addWidget(self.btn_next_drawn)
+        lay.addWidget(self.zoom_lo_label)
         lay.addWidget(self.slider, 1)
+        lay.addWidget(self.zoom_hi_label)
         lay.addWidget(QLabel("Frame"))
         lay.addWidget(self.spin)
         lay.addWidget(self.total_label)
@@ -265,11 +296,32 @@ class TransportBar(QWidget):
 
     # ------------------------------------------------------------------ API
     def set_range(self, last_frame: int) -> None:
+        """영상 길이. 확대는 전체로 되돌아간다 (DrawTab 이 필요하면 set_zoom 으로 다시 맞춘다)."""
+        self._last = max(0, int(last_frame))
         self._updating = True
-        self.slider.setRange(0, max(0, last_frame))
-        self.spin.setRange(0, max(0, last_frame))
+        self.spin.setRange(0, self._last)
         self.total_label.setText(f"/ {last_frame}")
         self._updating = False
+        self.set_zoom(0, self._last)
+
+    def zoom(self) -> tuple[int, int]:
+        return self._zoom
+
+    def set_zoom(self, lo: int, hi: int) -> None:
+        """타임라인 양 끝에 보일 프레임 (신호 없음). 범위 밖의 재생 위치는 가장자리에 붙는다."""
+        lo, hi = max(0, min(int(lo), self._last)), max(0, min(int(hi), self._last))
+        if hi < lo:
+            lo, hi = hi, lo
+        self._zoom = (lo, hi)
+        self._updating = True
+        self.slider.setRange(lo, hi)
+        self.slider.setValue(self.spin.value())
+        self._updating = False
+        zoomed = not (lo == 0 and hi >= self._last)
+        color = C.Colors.ACCENT if zoomed else C.Colors.TEXT_DIM
+        for lb, v in ((self.zoom_lo_label, lo), (self.zoom_hi_label, hi)):
+            lb.setText(str(v))
+            lb.setStyleSheet(f"color: {color};")
 
     def set_markers(self, frames: list[int]) -> None:
         self.slider.set_markers(frames)

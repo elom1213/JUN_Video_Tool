@@ -20,6 +20,7 @@ from ..config import constants as C
 from ..config.settings import AppSettings
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
 from ..core.frame_decoder import normalize_scale
+from .widgets.draw.geometry import normalize_zoom
 from ..core.memory_info import (format_gib, full_cache_budget, normalize_cache_range, plan_cache_window,
                                 reserve_bytes, system_memory)
 from ..core.models import MediaInfo, VideoItem
@@ -36,6 +37,7 @@ from .widgets.draw.ghost_panel import GhostPanel
 from .widgets.draw.playback_controller import PlaybackController
 from .widgets.draw.transport_bar import TransportBar
 from .widgets.draw.video_canvas import VideoCanvas
+from .widgets.draw.zoom_panel import ZoomPanel
 from .widgets.loaders import ProbeLoader, ThumbnailLoader
 from .widgets.log_panel import LogPanel
 from .widgets.video_list_model import VideoListModel
@@ -74,6 +76,7 @@ class DrawTab(QWidget):
         self._reverting = False
         self._decode_scale = C.DRAW_DECODE_SCALE_DEFAULT   # 디코드 해상도 (원본의 %)
         self._cache_range = (0, 0)             # 캐시 구간 [start, end] (영상을 열면 전체로 맞춘다)
+        self._zoom = (0, 0)                    # 타임라인 양 끝 프레임 [lo, hi] (영상을 열면 전체)
 
         self._build_actions()
         self._build_ui()
@@ -153,6 +156,8 @@ class DrawTab(QWidget):
         self.act_export = self._act("export", "Export with Drawing…", "Ctrl+E", self.export, icon_text="Export…")
         self.act_cache_whole = self._act(None, "Cache Whole Video", slot=self.cache_whole_video)
         self.act_free_cache = self._act(None, "Free All Frame Cache", slot=self.free_all_cache)
+        self.act_zoom_cache = self._act(None, "Zoom Timeline to Cache Range", "Z", self.zoom_to_cache_range)
+        self.act_zoom_reset = self._act(None, "Reset Timeline Zoom", "Shift+Z", self.reset_timeline_zoom)
 
     def _build_ui(self) -> None:
         # --- 툴바 ---
@@ -224,6 +229,8 @@ class DrawTab(QWidget):
         sv.addWidget(scrub_box)
         self.cache_panel = CachePanel()
         sv.addWidget(self.cache_panel)
+        self.zoom_panel = ZoomPanel()
+        sv.addWidget(self.zoom_panel)
         brow = QHBoxLayout()
         self.undo_btn = QPushButton(icon("undo"), "Undo")
         self.redo_btn = QPushButton(icon("redo"), "Redo")
@@ -306,6 +313,10 @@ class DrawTab(QWidget):
         # 캐시 구간: 타임라인 핸들과 스핀박스가 같은 값을 보여 준다 — 어느 쪽을 고쳐도 set_cache_range 로 모은다
         self.cache_panel.range_changed.connect(self.set_cache_range)
         self.transport.cache_range_changed.connect(self.set_cache_range)
+        # 타임라인 확대: 패널 스핀박스 · 버튼 · 메뉴가 모두 set_timeline_zoom 으로 모인다
+        self.zoom_panel.zoom_changed.connect(self.set_timeline_zoom)
+        self.zoom_panel.fit_cache_clicked.connect(self.zoom_to_cache_range)
+        self.zoom_panel.reset_clicked.connect(self.reset_timeline_zoom)
 
         cv = self.canvas
         cv.stroke_finished.connect(self._stroke_finished)
@@ -332,7 +343,7 @@ class DrawTab(QWidget):
                 self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
-                self.act_cache_whole, self.act_free_cache, None,
+                self.act_cache_whole, self.act_free_cache, self.act_zoom_cache, self.act_zoom_reset, None,
                 self.act_remove, self.act_clear_list]
 
     def log_panel(self) -> LogPanel:
@@ -465,6 +476,10 @@ class DrawTab(QWidget):
         self.act_cache_whole.setText("Stop Caching" if filling is not None and filling == self._video_name()
                                      else ("Cache Whole Video" if self._range_is_whole() else "Cache Range"))
         self.act_free_cache.setEnabled(a and (self.provider.pinned_total()[0] > 0 or filling is not None))
+        can_zoom = has_video and self.controller.last_frame() >= 1
+        self.act_zoom_cache.setEnabled(a and can_zoom and self._cache_range != self._zoom)
+        self.act_zoom_reset.setEnabled(a and can_zoom and self._zoom != (0, self.controller.last_frame()))
+        self.zoom_panel.set_fit_enabled(self.act_zoom_cache.isEnabled())
 
     # ================================================================== 파일 추가 · 제거
     def add_files(self) -> None:
@@ -580,6 +595,7 @@ class DrawTab(QWidget):
         self.transport.set_has_audio(False)
         self.cache_panel.set_source_size(0, 0)
         self._set_cache_bounds(-1)
+        self._set_zoom_bounds(-1)
         self._refresh_cache_ui()
         self._update_actions()
         self.title_changed.emit()
@@ -607,6 +623,7 @@ class DrawTab(QWidget):
         self.transport.set_range(self.controller.last_frame())
         self.transport.set_has_audio(info.has_audio)
         self._set_cache_bounds(self.controller.last_frame())     # 새 영상은 전체 구간부터
+        self._set_zoom_bounds(self.controller.last_frame())      # 타임라인도 전체부터
         self._doc_path = None
         doc = self._read_sidecar(item)
         self._set_document(doc)
@@ -678,6 +695,41 @@ class DrawTab(QWidget):
         self.cache_panel.set_cache_range(*rng)
         self.transport.set_cache_range(rng)
         self._refresh_cache_ui()
+
+    # ------------------------------------------------------------------ 타임라인 확대 (18장)
+    def timeline_zoom(self) -> tuple[int, int]:
+        return self._zoom
+
+    def _set_zoom_bounds(self, last: int) -> None:
+        """영상 길이가 정해지면 확대 입력 범위를 맞추고 전체로 되돌린다. last < 0 = 영상 없음."""
+        self.zoom_panel.set_bounds(last)
+        self._zoom = (0, max(0, last))
+        self.transport.set_zoom(*self._zoom)
+
+    def set_timeline_zoom(self, lo: int, hi: int) -> None:
+        """타임라인 양 끝에 보일 프레임을 정한다. 패널 · 버튼 · 메뉴 어디서 와도 여기로 모여 양쪽 UI 를 맞춘다."""
+        if self.controller.item() is None:
+            return
+        last = self.controller.last_frame()
+        zoom = normalize_zoom(lo, hi, last)
+        changed = zoom != self._zoom
+        self._zoom = zoom
+        self.zoom_panel.set_zoom(*zoom)
+        self.transport.set_zoom(*zoom)
+        if changed:
+            if zoom == (0, last):
+                self.log.append("Timeline shows the whole video.")
+            else:
+                self.log.append(f"Timeline zoomed to frames {zoom[0]}-{zoom[1]}.")
+        self._update_actions()
+
+    def zoom_to_cache_range(self) -> None:
+        if self.controller.item() is not None:
+            self.set_timeline_zoom(*self._cache_range)
+
+    def reset_timeline_zoom(self) -> None:
+        if self.controller.item() is not None:
+            self.set_timeline_zoom(0, self.controller.last_frame())
 
     def cache_whole_video(self) -> None:
         """지금 영상의 캐시 구간을 메모리에 올린다 (채우는 중이면 멈춘다). 다 안 들어가면 현재 프레임 주변만."""
@@ -751,6 +803,7 @@ class DrawTab(QWidget):
         frame, playing = self.controller.frame(), self.controller.is_playing()
         self.controller.set_video(item, self.settings.hwaccel, scale, frame)
         self.transport.set_range(self.controller.last_frame())
+        self.transport.set_zoom(*self._zoom)
         spec = p.spec
         if spec is not None:
             self.log.append(f"Decoding at {spec.out_w}x{spec.out_h} ({spec.frame_bytes / 2 ** 20:.1f} MB per frame). "
@@ -856,6 +909,12 @@ class DrawTab(QWidget):
         self._cache_range = normalize_cache_range(a, b, last)
         self.cache_panel.set_cache_range(*self._cache_range)
         self.transport.set_cache_range(self._cache_range)
+        # 확대도 잘라서 유지한다 (전체였으면 새 전체로)
+        lo, hi = self._zoom
+        self.zoom_panel.set_bounds(last)
+        self._zoom = normalize_zoom(lo, hi, last)
+        self.zoom_panel.set_zoom(*self._zoom)
+        self.transport.set_zoom(*self._zoom)
         self._refresh_cache_ui()
 
     def _decode_error(self, gen: int, msg: str) -> None:
