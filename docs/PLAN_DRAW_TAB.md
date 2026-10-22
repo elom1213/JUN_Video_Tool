@@ -889,3 +889,24 @@ EXPORT_SUFFIX = "_draw"
 `dev/check_draw.py` [11] ALL OK — 반전 전후 화면 픽셀이 좌우 · 상하 · 양축으로 맞바뀜, `screen_point` 가 반전을 따름,
 반전 중 그은 선이 문서에는 거울상(1080 → 280)으로 들어가고 화면에는 마우스 자리에 보임, 반전을 끄면 소스 자리로 감,
 메뉴 액션으로 양축, 설정 저장.
+
+---
+
+## 17. 2026-10-22 추가 요청 (v0.4.2) — 캐시 구간 UI
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C2 | 타임라인에서 캐시 구간의 시작 · 끝 프레임을 정하는 UI | `_MarkerSlider` 위쪽 띠(`RANGE_STRIP_H` 11 px)에 구간 띠(ACCENT α70) + 양 끝 아래 향한 삼각 핸들. 띠 안에서 누르면 핸들 드래그만 하고 시크하지 않는다. 핸들에서 `GRAB_PX` 7 px 안이면 잡힘, 호버 시 `SplitHCursor` · 밝은 핸들. 시작은 끝을, 끝은 시작을 못 넘는다. `cache_range_changed(start, end)` (드래그 중에도) |
+| C3 | 시작 · 끝 프레임을 정수로 입력하는 UI | `CachePanel` `Range` 행: `start_spin` · `end_spin`(0 ~ 마지막 프레임, keyboardTracking 끔) + `All`. 시작 > 끝이면 끝이 따라오고 반대도 같다. `range_changed(start, end)`. 아래 `range_info`: 프레임 수 · 필요 메모리 · `(whole video)` |
+| C4 | 두 UI 가 서로 따라가게 | 단일 진실은 `DrawTab._cache_range`. 양쪽 신호가 `DrawTab.set_cache_range(start, end)` 로 모이고, 거기서 `normalize_cache_range` 뒤 `cache_panel.set_cache_range`(신호 없음) · `transport.set_cache_range`(신호 없음) 둘 다 맞춘다 → 되먹임 없음 |
+
+**캐시 실행과의 연결**
+- `cache_whole_video` 는 `[a, b]` 구간을 `plan_cache_window(a, b, frame_bytes, current, budget, pinned_in(a, b))` 로 계획한다 —
+  구간이 예산에 들어가면 그대로, 아니면 구간 안에서 현재 프레임 주변 창. `start_full_cache(..., whole=구간이 영상 전체 and 다 들어감)`.
+- 패널 현황 · `Needs` · 버튼 활성은 구간 기준 (`FrameProvider.pinned_in(a, b)`). 버튼 · 메뉴 문구 `Cache Whole Video` / `Cache Range`.
+- 영상을 열면 `_set_cache_bounds(last)` 가 전체 구간으로 되돌린다. `range_changed`(실제 프레임 수가 적음)면 구간을 잘라 유지한다.
+- 타임라인 레이아웃 (위 → 아래): 구간 띠 + 핸들 (0 ~ 11 px) → 전체 캐시된 녹색 줄 (12 ~ 13 px) → 그루브 → 그림 마커 점. 최소 높이 22 → 34 px.
+
+검증: `pytest` 151개 (`normalize_cache_range`, `plan_cache_window` 전체 · 부분 · 구간 밖 현재 프레임 · 빈 구간),
+`dev/check_draw.py` [12] — 스핀박스 100-150 → 핸들, 끝 핸들 드래그 → 스핀박스, 드래그가 시크하지 않음, 시작 핸들이 끝에서 멈춤,
+구간만 캐시 → `pinned_ranges == [(100, b)]` · `This range: all n frames cached.`, 시작 스핀 250 → 끝이 따라옴, `All` → 전체.

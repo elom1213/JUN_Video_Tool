@@ -226,6 +226,13 @@ class FrameProvider(QThread):
         with self._cv:
             return len(self._pin.frames) if self._pin is not None else 0
 
+    def pinned_in(self, start: int, end: int) -> int:
+        """지금 영상의 전체 캐시 중 [start, end] 안에 있는 프레임 수."""
+        with self._cv:
+            if self._pin is None:
+                return 0
+            return sum(1 for f in self._pin.frames if start <= f <= end)
+
     def pinned_complete(self) -> bool:
         with self._cv:
             return self._pin is not None and self._pin.complete

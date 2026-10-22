@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-22
 """시스템 메모리 조회 + 전체 프레임 캐시 예산 계산. PySide6 비의존 (psutil 없이 ctypes).
 
 Draw 탭의 "Cache Whole Video" 가 쓴다. 영상 전 구간을 RGB24 로 메모리에 올리므로,
@@ -79,6 +79,27 @@ def plan_cache_range(frame_count: int, frame_bytes: int, current: int, budget: i
         end = frame_count - 1
         start = end - fit + 1
     return start, end
+
+
+def normalize_cache_range(start: int, end: int, last: int) -> tuple[int, int]:
+    """캐시 구간 [start, end] 를 0 ~ last 로 클램프하고 start <= end 를 보장한다. last < 0 이면 (0, 0)."""
+    last = max(0, int(last))
+    a = max(0, min(int(start), last))
+    b = max(0, min(int(end), last))
+    if a > b:
+        a, b = b, a
+    return a, b
+
+
+def plan_cache_window(start: int, end: int, frame_bytes: int, current: int, budget: int,
+                      already_cached: int = 0) -> tuple[int, int]:
+    """구간 [start, end] 안에서 캐시할 [a, b] (b 포함). 구간 전체가 예산에 들어가면 그대로, 아니면 현재 프레임을
+    가운데로 한 창 (현재 프레임이 구간 밖이면 가까운 쪽 끝에 붙는다). 빈 결과는 b < a."""
+    n = end - start + 1
+    if n <= 0:
+        return start, start - 1
+    a, b = plan_cache_range(n, frame_bytes, int(current) - start, budget, already_cached)
+    return start + a, start + b
 
 
 def format_gib(n: int) -> str:

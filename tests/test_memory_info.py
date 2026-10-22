@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """전체 프레임 캐시 예산 · 범위 계산 (memory_info)."""
-from app.core.memory_info import GIB, MemoryStatus, full_cache_budget, plan_cache_range, reserve_bytes, system_memory
+from app.core.memory_info import (GIB, MemoryStatus, full_cache_budget, normalize_cache_range, plan_cache_range,
+                                  plan_cache_window, reserve_bytes, system_memory)
 
 
 def test_reserve_bytes():
@@ -44,3 +45,26 @@ def test_system_memory_reads():
     mem = system_memory()
     assert mem is not None
     assert mem.total > 0 and 0 < mem.available <= mem.total
+
+
+def test_normalize_cache_range():
+    assert normalize_cache_range(10, 50, 299) == (10, 50)
+    assert normalize_cache_range(50, 10, 299) == (10, 50)          # 뒤집힌 입력은 바로잡는다
+    assert normalize_cache_range(-5, 1000, 299) == (0, 299)
+    assert normalize_cache_range(0, 0, -1) == (0, 0)
+
+
+def test_plan_cache_window_fits():
+    assert plan_cache_window(100, 199, 10, 150, 1000) == (100, 199)
+    assert plan_cache_window(100, 199, 10, 0, 10 ** 9) == (100, 199)
+    assert plan_cache_window(100, 199, 10, 150, 500, already_cached=50) == (100, 199)
+
+
+def test_plan_cache_window_partial():
+    a, b = plan_cache_window(100, 199, 10, 150, 200)              # 20 프레임만, 150 가운데
+    assert b - a + 1 == 20 and a <= 150 <= b and 100 <= a and b <= 199
+    assert plan_cache_window(100, 199, 10, 5, 200) == (100, 119)     # 현재가 구간 앞 → 앞에 붙는다
+    assert plan_cache_window(100, 199, 10, 900, 200) == (180, 199)   # 현재가 구간 뒤 → 뒤에 붙는다
+    a, b = plan_cache_window(100, 199, 10, 150, 5)
+    assert b < a                                                  # 한 프레임도 안 됨
+    assert plan_cache_window(50, 49, 10, 0, 1000)[1] < 50          # 빈 구간

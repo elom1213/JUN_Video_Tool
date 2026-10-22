@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.2 — 2026-10-22
+
+- **Draw 탭 캐시 구간**: 영상 전체가 아니라 원하는 프레임 구간만 메모리에 올릴 수 있다.
+  - 타임라인 위쪽 띠에 주황 구간 띠와 양 끝 삼각 핸들. 핸들을 끌면 시작 · 끝 프레임이 바뀐다 (재생 위치는 움직이지 않는다).
+    시작은 끝을, 끝은 시작을 넘지 못한다.
+  - `Resolution & Cache` 패널 `Range` 행의 시작 · 끝 스핀박스(정수 입력) + `All`(전체 구간). 시작을 끝 너머로 올리면 끝이 따라오고 반대도 같다.
+  - 두 UI 는 항상 같은 값이다: 핸들을 끌면 스핀박스가, 스핀박스를 고치면 핸들이 따라 움직인다 (`DrawTab.set_cache_range` 한 곳으로 모은다).
+  - 구간 아래에 프레임 수 · 필요 메모리. 버튼 · 메뉴는 구간이 전체면 `Cache Whole Video`, 아니면 `Cache Range`.
+    패널의 캐시 현황(`This range: k of n frames cached`)과 `Needs` 도 구간 기준. 메모리가 모자라면 구간 안에서 현재 프레임 주변만.
+  - 영상을 열면 전체 구간으로 되돌아간다.
+- `memory_info.normalize_cache_range` · `plan_cache_window`, `FrameProvider.pinned_in`. `tests/test_memory_info.py` 3개, `dev/check_draw.py` [12].
+
 ## 0.4.1 — 2026-10-22
 
 - **Draw 탭 보기 반전**: 툴바 `Flip H` / `Flip V` 버튼, `Draw > Flip Horizontal`(`H`) · `Flip Vertical`(`V`).

@@ -20,7 +20,8 @@ from ..config import constants as C
 from ..config.settings import AppSettings
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
 from ..core.frame_decoder import normalize_scale
-from ..core.memory_info import format_gib, full_cache_budget, plan_cache_range, reserve_bytes, system_memory
+from ..core.memory_info import (format_gib, full_cache_budget, normalize_cache_range, plan_cache_window,
+                                reserve_bytes, system_memory)
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
 from ..core.utils import human_size
@@ -72,6 +73,7 @@ class DrawTab(QWidget):
         self._last_error = ""
         self._reverting = False
         self._decode_scale = C.DRAW_DECODE_SCALE_DEFAULT   # 디코드 해상도 (원본의 %)
+        self._cache_range = (0, 0)             # 캐시 구간 [start, end] (영상을 열면 전체로 맞춘다)
 
         self._build_actions()
         self._build_ui()
@@ -301,6 +303,9 @@ class DrawTab(QWidget):
         self.cache_panel.cache_clicked.connect(self.cache_whole_video)
         self.cache_panel.free_clicked.connect(self.free_all_cache)
         self.cache_panel.scale_changed.connect(self.set_decode_scale)
+        # 캐시 구간: 타임라인 핸들과 스핀박스가 같은 값을 보여 준다 — 어느 쪽을 고쳐도 set_cache_range 로 모은다
+        self.cache_panel.range_changed.connect(self.set_cache_range)
+        self.transport.cache_range_changed.connect(self.set_cache_range)
 
         cv = self.canvas
         cv.stroke_finished.connect(self._stroke_finished)
@@ -458,7 +463,7 @@ class DrawTab(QWidget):
         filling = self.provider.filling_name()
         self.act_cache_whole.setEnabled(a and has_video)
         self.act_cache_whole.setText("Stop Caching" if filling is not None and filling == self._video_name()
-                                     else "Cache Whole Video")
+                                     else ("Cache Whole Video" if self._range_is_whole() else "Cache Range"))
         self.act_free_cache.setEnabled(a and (self.provider.pinned_total()[0] > 0 or filling is not None))
 
     # ================================================================== 파일 추가 · 제거
@@ -574,6 +579,7 @@ class DrawTab(QWidget):
         self.transport.set_markers([])
         self.transport.set_has_audio(False)
         self.cache_panel.set_source_size(0, 0)
+        self._set_cache_bounds(-1)
         self._refresh_cache_ui()
         self._update_actions()
         self.title_changed.emit()
@@ -600,6 +606,7 @@ class DrawTab(QWidget):
         self.cache_panel.set_source_size(info.width, info.height)
         self.transport.set_range(self.controller.last_frame())
         self.transport.set_has_audio(info.has_audio)
+        self._set_cache_bounds(self.controller.last_frame())     # 새 영상은 전체 구간부터
         self._doc_path = None
         doc = self._read_sidecar(item)
         self._set_document(doc)
@@ -621,9 +628,11 @@ class DrawTab(QWidget):
     def _refresh_cache_ui(self) -> None:
         p = self.provider
         name = self._video_name()
-        frames = self.controller.last_frame() + 1 if name is not None else 0
-        cached = p.pinned_frames() if name is not None else 0
-        complete = p.pinned_complete() if name is not None else False
+        a, b = self._cache_range
+        whole = self._range_is_whole()
+        frames = b - a + 1 if name is not None else 0
+        cached = p.pinned_in(a, b) if name is not None else 0
+        complete = name is not None and (p.pinned_complete() or (frames > 0 and cached >= frames))
         total, videos = p.pinned_total()
         need_text = None
         spec = p.spec
@@ -632,12 +641,46 @@ class DrawTab(QWidget):
             mem = system_memory()
             if mem is not None:
                 need_text += f" · {format_gib(full_cache_budget(mem))} usable"
-        self.cache_panel.set_state(name, cached, frames, complete, p.filling_name(), total, videos, need_text)
+        self.cache_panel.set_state(name, cached, frames, complete, p.filling_name(), total, videos, need_text, whole)
         self.transport.set_cached_ranges(p.pinned_ranges() if name is not None else [])
         self._update_actions()
 
+    # ------------------------------------------------------------------ 캐시 구간
+    def cache_range(self) -> tuple[int, int]:
+        return self._cache_range
+
+    def _range_is_whole(self) -> bool:
+        a, b = self._cache_range
+        return a == 0 and b >= self.controller.last_frame()
+
+    def _set_cache_bounds(self, last: int) -> None:
+        """영상 길이가 정해지면 (열기 · 길이 보정) 구간 입력 범위를 맞추고 전체 구간으로 되돌린다. last < 0 = 영상 없음."""
+        self.cache_panel.set_range_bounds(last)
+        if last < 0:
+            self._cache_range = (0, 0)
+            self.transport.set_cache_range(None)
+            return
+        self._cache_range = (0, last)
+        self.cache_panel.set_cache_range(0, last)
+        self.transport.set_cache_range((0, last))
+
+    def set_cache_range(self, start: int, end: int) -> None:
+        """캐시 구간을 정한다. 타임라인 핸들 · 스핀박스 · 코드 어디서 와도 여기로 모여 양쪽 UI 를 맞춘다."""
+        if self.controller.item() is None:
+            return
+        rng = normalize_cache_range(start, end, self.controller.last_frame())
+        if rng == self._cache_range:
+            # 값은 같아도 보낸 쪽이 아닌 다른 쪽 UI 가 어긋나 있을 수 있다 (스핀박스가 끝을 당겨 맞춘 경우)
+            self.cache_panel.set_cache_range(*rng)
+            self.transport.set_cache_range(rng)
+            return
+        self._cache_range = rng
+        self.cache_panel.set_cache_range(*rng)
+        self.transport.set_cache_range(rng)
+        self._refresh_cache_ui()
+
     def cache_whole_video(self) -> None:
-        """지금 영상 전 구간을 메모리에 올린다 (채우는 중이면 멈춘다). 다 안 들어가면 현재 프레임 주변만."""
+        """지금 영상의 캐시 구간을 메모리에 올린다 (채우는 중이면 멈춘다). 다 안 들어가면 현재 프레임 주변만."""
         item = self.controller.item()
         p = self.provider
         spec = p.spec
@@ -646,32 +689,35 @@ class DrawTab(QWidget):
         if p.filling_name() == item.path.name:
             p.cancel_full_cache()
             return
-        if p.pinned_complete():
-            self.log.append(f"{item.path.name} is already fully cached.")
+        a, b = self._cache_range
+        whole_video = self._range_is_whole()
+        frames = b - a + 1
+        label = item.path.name if whole_video else f"{item.path.name} frames {a}-{b}"
+        if p.pinned_complete() or p.pinned_in(a, b) >= frames:
+            self.log.append(f"{label} is already fully cached.")
             return
-        frames = self.controller.last_frame() + 1
         mem = system_memory()
         if mem is None:
             budget, reserve = frames * spec.frame_bytes, 0     # 메모리를 못 읽으면 검사 없이 전부
         else:
             budget, reserve = full_cache_budget(mem), reserve_bytes(mem.total)
-        start, end = plan_cache_range(frames, spec.frame_bytes, self.controller.frame(), budget, p.pinned_frames())
+        start, end = plan_cache_window(a, b, spec.frame_bytes, self.controller.frame(), budget, p.pinned_in(a, b))
         if end < start:
             free = format_gib(mem.available) if mem is not None else "?"
-            self.log.append_error(f"Not enough free memory to cache {item.path.name} ({free} free, "
+            self.log.append_error(f"Not enough free memory to cache {label} ({free} free, "
                                   f"{format_gib(reserve)} is kept for the system). "
                                   f"Free some cache or close other apps.")
             return
-        whole = start == 0 and end == frames - 1
-        if whole:
+        fits = start == a and end == b
+        if fits:
             free = f" ({format_gib(mem.available)} free)" if mem is not None else ""
-            self.log.append(f"Caching {item.path.name}: {frames} frames, about "
-                            f"{format_gib(frames * spec.frame_bytes)}{free}.")
+            self.log.append(f"Caching {label}: {frames} frames, about {format_gib(frames * spec.frame_bytes)}{free}.")
         else:
-            self.log.append_error(f"Not enough free memory for the whole video "
+            self.log.append_error(f"Not enough free memory for {'the whole video' if whole_video else 'the range'} "
                                   f"({format_gib(frames * spec.frame_bytes)} needed, {format_gib(budget)} usable). "
                                   f"Caching frames {start}-{end} around the current frame.")
-        if p.start_full_cache(start, end, reserve, whole):
+        # whole = 0 ~ 마지막 프레임 전부: pin.complete 판정에 쓰인다
+        if p.start_full_cache(start, end, reserve, whole_video and fits):
             self.cache_panel.set_progress(0, end - start + 1)
         self._refresh_cache_ui()
 
@@ -804,6 +850,13 @@ class DrawTab(QWidget):
         self.transport.set_range(last)
         self.log.append(f"Video has fewer frames than reported; last frame is {last}. "
                         "Variable frame rate videos may show approximate frame numbers.")
+        # 캐시 구간 입력 범위도 줄어든다 — 구간은 잘라서 유지한다
+        a, b = self._cache_range
+        self.cache_panel.set_range_bounds(last)
+        self._cache_range = normalize_cache_range(a, b, last)
+        self.cache_panel.set_cache_range(*self._cache_range)
+        self.transport.set_cache_range(self._cache_range)
+        self._refresh_cache_ui()
 
     def _decode_error(self, gen: int, msg: str) -> None:
         if gen != self.controller.video_gen() or msg == self._last_error:

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
-"""트랜스포트 바 (PLAN_DRAW_TAB 5.5, 13.1): 버튼 · 타임라인(그림 마커) · 프레임 스핀 · 타임코드 · 음량."""
+# last Update date : 2026-10-22
+"""트랜스포트 바 (PLAN_DRAW_TAB 5.5, 13.1, 17장): 버튼 · 타임라인(그림 마커 · 캐시 구간 핸들) · 프레임 스핀 · 타임코드 · 음량."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPaintEvent
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSlider, QSpinBox, QStyle, QStyleOptionSlider, QToolButton,
                                QWidget)
 
@@ -16,14 +16,27 @@ from .playback_controller import PlaybackController
 
 
 class _MarkerSlider(QSlider):
-    """그림이 있는 프레임 위치마다 그루브 아래에 코랄 점을, 전체 캐시된 구간은 그루브 위에 녹색 줄을 그린다."""
+    """타임라인. 위에서 아래로: 캐시 구간 띠 + 양 끝 핸들(드래그) → 전체 캐시된 구간 녹색 줄 → 그루브 → 그림 마커 점.
+
+    캐시 구간 핸들은 위쪽 띠(RANGE_STRIP_H px)에서만 잡힌다. 그 아래는 평소의 재생 위치 슬라이더다.
+    """
+    cache_range_changed = Signal(int, int)     # start, end (드래그 중에도 보낸다)
+
+    RANGE_STRIP_H = 11      # 캐시 구간 띠 높이 (px). 이 안에서 누르면 핸들 드래그다
+    HANDLE_W = 9            # 핸들 삼각형 폭
+    GRAB_PX = 7             # 핸들 중심에서 이만큼 안이면 잡힌다
 
     def __init__(self, parent=None) -> None:
         super().__init__(Qt.Orientation.Horizontal, parent)
         self._markers: list[int] = []
         self._cached: list[tuple[int, int]] = []
-        self.setMinimumHeight(22)
+        self._range: tuple[int, int] | None = None     # 캐시 구간 (None = 안 보임)
+        self._drag: str | None = None                  # "start" | "end"
+        self._hover: str | None = None
+        self.setMinimumHeight(34)
+        self.setMouseTracking(True)
 
+    # ------------------------------------------------------------------ API
     def set_markers(self, frames: list[int]) -> None:
         self._markers = list(frames)
         self.update()
@@ -33,32 +46,132 @@ class _MarkerSlider(QSlider):
             self._cached = list(ranges)
             self.update()
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        super().paintEvent(event)
-        if not (self._markers or self._cached) or self.maximum() <= self.minimum():
-            return
+    def cache_range(self) -> tuple[int, int] | None:
+        return self._range
+
+    def set_cache_range(self, rng: tuple[int, int] | None) -> None:
+        """신호 없이 띠만 옮긴다 (스핀박스 · 영상 전환에서 맞출 때)."""
+        if rng is not None:
+            rng = (int(rng[0]), int(rng[1]))
+        if rng != self._range:
+            self._range = rng
+            self.update()
+
+    # ------------------------------------------------------------------ 좌표
+    def _geom(self) -> tuple[int, int, int, float]:
         opt = QStyleOptionSlider()
         self.initStyleOption(opt)
         handle = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, opt,
                                              QStyle.SubControl.SC_SliderHandle, self)
-        span = self.width() - handle.width()
-        lo, hi, half = self.minimum(), self.maximum(), handle.width() / 2
+        return self.minimum(), self.maximum(), self.width() - handle.width(), handle.width() / 2
 
-        def xpos(f: int) -> float:
-            return QStyle.sliderPositionFromValue(lo, hi, f, span) + half
+    def _xpos(self, f: int) -> float:
+        lo, hi, span, half = self._geom()
+        return QStyle.sliderPositionFromValue(lo, hi, f, span) + half
 
+    def _frame_at(self, x: float) -> int:
+        lo, hi, span, half = self._geom()
+        return QStyle.sliderValueFromPosition(lo, hi, int(round(x - half)), span)
+
+    def _handle_hit(self, pos: QPointF) -> str | None:
+        """위쪽 띠 안의 좌표가 어느 핸들 위인지. 둘이 겹쳐 있으면 마우스가 있는 쪽을 고른다."""
+        if self._range is None or pos.y() > self.RANGE_STRIP_H or self.maximum() <= self.minimum():
+            return None
+        a, b = self._range
+        xa, xb = self._xpos(a), self._xpos(b)
+        da, db = abs(pos.x() - xa), abs(pos.x() - xb)
+        if min(da, db) > self.GRAB_PX:
+            return None
+        if da == db:
+            return "start" if pos.x() < xa else "end"
+        return "start" if da < db else "end"
+
+    # ------------------------------------------------------------------ 마우스
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        pos = event.position()
+        if event.button() == Qt.MouseButton.LeftButton and self._range is not None and pos.y() <= self.RANGE_STRIP_H:
+            # 띠 안에서 누르면 재생 위치는 안 움직인다 (핸들을 놓쳐도 시크되지 않게)
+            self._drag = self._handle_hit(pos)
+            if self._drag is not None:
+                self._drag_to(pos.x())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        pos = event.position()
+        if self._drag is not None:
+            self._drag_to(pos.x())
+            event.accept()
+            return
+        hover = self._handle_hit(pos)
+        if hover != self._hover:
+            self._hover = hover
+            self.setCursor(Qt.CursorShape.SplitHCursor if hover else Qt.CursorShape.ArrowCursor)
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = None
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._hover is not None:
+            self._hover = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+        super().leaveEvent(event)
+
+    def _drag_to(self, x: float) -> None:
+        assert self._range is not None and self._drag is not None
+        f = max(self.minimum(), min(self.maximum(), self._frame_at(x)))
+        a, b = self._range
+        if self._drag == "start":
+            a = min(f, b)                   # 끝을 넘어가지 않는다
+        else:
+            b = max(f, a)
+        if (a, b) != self._range:
+            self._range = (a, b)
+            self.update()
+            self.cache_range_changed.emit(a, b)
+
+    # ------------------------------------------------------------------ 페인트
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if not (self._markers or self._cached or self._range is not None) or self.maximum() <= self.minimum():
+            return
         p = QPainter(self)
         p.setPen(Qt.PenStyle.NoPen)
+        strip = self.RANGE_STRIP_H
+        if self._range is not None:
+            a, b = self._range
+            x0, x1 = self._xpos(a), self._xpos(b)
+            band = QColor(C.Colors.ACCENT)
+            band.setAlpha(70)
+            p.setBrush(band)
+            p.drawRect(int(x0), 3, max(1, int(x1 - x0) + 1), strip - 5)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            hw = self.HANDLE_W / 2
+            for key, x in (("start", x0), ("end", x1)):
+                active = self._drag == key or (self._drag is None and self._hover == key)
+                p.setBrush(QColor(C.Colors.TEXT if active else C.Colors.ACCENT))
+                # 아래를 향한 삼각형: 꼭짓점이 그 프레임 자리
+                p.drawPolygon(QPolygonF([QPointF(x - hw, 0.0), QPointF(x + hw, 0.0), QPointF(x, strip - 1.0)]))
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if self._cached:
             p.setBrush(QColor(C.Colors.OK))
             for a, b in self._cached:
-                x0, x1 = int(xpos(a)), int(xpos(b))
-                p.drawRect(x0, 1, max(1, x1 - x0 + 1), 2)
+                x0, x1 = int(self._xpos(a)), int(self._xpos(b))
+                p.drawRect(x0, strip + 1, max(1, x1 - x0 + 1), 2)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setBrush(QColor(C.Colors.ACCENT))
         y = self.height() - 3
         for f in self._markers:
-            p.drawEllipse(int(xpos(f)) - 2, y - 2, 4, 4)
+            p.drawEllipse(int(self._xpos(f)) - 2, y - 2, 4, 4)
         p.end()
 
 
@@ -78,6 +191,7 @@ class TransportBar(QWidget):
     muted_changed = Signal(bool)
     prev_drawn_clicked = Signal()      # 그림이 있는 이전 프레임으로
     next_drawn_clicked = Signal()      # 그림이 있는 다음 프레임으로
+    cache_range_changed = Signal(int, int)   # 타임라인 핸들로 캐시 구간을 바꿈 (start, end)
 
     def __init__(self, controller: PlaybackController, parent=None) -> None:
         super().__init__(parent)
@@ -139,6 +253,7 @@ class TransportBar(QWidget):
         self.slider.sliderMoved.connect(self._slider_moved)
         self.slider.sliderReleased.connect(self._slider_released)
         self.slider.valueChanged.connect(self._slider_value)
+        self.slider.cache_range_changed.connect(self.cache_range_changed)
         self.spin.valueChanged.connect(self._spin_value)
         self.btn_mute.toggled.connect(self._mute_toggled)
         self.volume.valueChanged.connect(self.volume_changed)
@@ -161,6 +276,10 @@ class TransportBar(QWidget):
 
     def set_cached_ranges(self, ranges: list[tuple[int, int]]) -> None:
         self.slider.set_cached_ranges(ranges)
+
+    def set_cache_range(self, rng: tuple[int, int] | None) -> None:
+        """캐시 구간 띠를 맞춘다 (신호 없음). None = 영상 없음."""
+        self.slider.set_cache_range(rng)
 
     def set_frame(self, frame: int) -> None:
         self._updating = True

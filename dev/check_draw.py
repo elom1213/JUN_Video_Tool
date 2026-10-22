@@ -529,6 +529,59 @@ def main() -> int:
         d2.doc.clear_frame(30)
         d2._doc_changed()
         d2.doc.dirty = False          # 안 그러면 close 가 저장 여부를 묻는 모달에서 멈춘다
+
+        print("[12] cache range (timeline handles <-> spin boxes)")
+        sl = d2.transport.slider
+        check(d2.cache_range() == (0, 299) and sl.cache_range() == (0, 299) and cp.cache_range() == (0, 299),
+              "new video: range = whole video")
+        check(cp.cache_btn.text() == "Cache Whole Video" and "whole video" in cp.range_info.text(),
+              f"panel: {cp.cache_btn.text()} / {cp.range_info.text()}")
+        # 스핀박스 → 타임라인
+        cp.start_spin.setValue(100)
+        cp.end_spin.setValue(150)
+        pump(app, 0.1)
+        check(d2.cache_range() == (100, 150) and sl.cache_range() == (100, 150),
+              f"spin boxes 100-150 -> timeline {sl.cache_range()}")
+        check(cp.cache_btn.text() == "Cache Range" and d2.act_cache_whole.text() == "Cache Range"
+              and cp.range_info.text().startswith("51 frames"), f"panel: {cp.cache_btn.text()} / {cp.range_info.text()}")
+        # 타임라인 끝 핸들 드래그 → 스핀박스
+        playhead = d2.controller.frame()
+        x_end, x_to = int(sl._xpos(150)), int(sl._xpos(200))
+        QTest.mousePress(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x_end, 5))
+        QTest.mouseMove(sl, QPoint(x_to, 5))
+        QTest.mouseRelease(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x_to, 5))
+        pump(app, 0.1)
+        check(abs(sl.cache_range()[1] - 200) <= 1 and sl.cache_range()[0] == 100, f"drag end handle -> {sl.cache_range()}")
+        check(cp.cache_range() == d2.cache_range() == sl.cache_range(), f"spin boxes follow {cp.cache_range()}")
+        check(d2.controller.frame() == playhead, "dragging a range handle does not seek")
+        a, b = d2.cache_range()
+        # 시작 핸들을 끝 너머로 끌면 끝에서 멈춘다
+        QTest.mousePress(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(sl._xpos(a)), 5))
+        QTest.mouseMove(sl, QPoint(int(sl._xpos(290)), 5))
+        QTest.mouseRelease(sl, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(sl._xpos(290)), 5))
+        pump(app, 0.1)
+        check(d2.cache_range() == (b, b) and cp.cache_range() == (b, b), f"start handle stops at the end ({d2.cache_range()})")
+        d2.set_cache_range(100, b)
+        pump(app, 0.1)
+        check(cp.cache_range() == (100, b) and sl.cache_range() == (100, b), "set_cache_range updates both")
+        # 구간만 캐시
+        cp.cache_btn.click()
+        check(pump(app, 60, lambda: pv.filling_name() is None), "range caching finished")
+        pump(app, 0.2)
+        check(pv.pinned_ranges() == [(100, b)] and not pv.pinned_complete(), f"pinned {pv.pinned_ranges()}")
+        check(cp.video_label.text() == f"This range: all {b - 100 + 1} frames cached.", f"panel: {cp.video_label.text()}")
+        check(not cp.cache_btn.isEnabled() and "frames 100-" in d2.log.toPlainText(), "button off when range is cached")
+        # 스핀박스 시작을 끝 너머로 → 끝이 따라온다
+        cp.start_spin.setValue(250)
+        pump(app, 0.1)
+        check(d2.cache_range() == (250, 250) and sl.cache_range() == (250, 250), f"start spin 250 -> {d2.cache_range()}")
+        check(cp.video_label.text() == "This range: not cached." and cp.cache_btn.isEnabled(), "new range not cached")
+        cp.all_btn.click()
+        pump(app, 0.1)
+        check(d2.cache_range() == (0, 299) and cp.cache_btn.text() == "Cache Whole Video", "All -> whole video")
+        check(f"This video: {b - 100 + 1} of 300 frames cached." == cp.video_label.text(), f"panel: {cp.video_label.text()}")
+        cp.free_btn.click()
+        pump(app, 0.2)
         w2.close()
         pump(app, 0.5)
     finally:
