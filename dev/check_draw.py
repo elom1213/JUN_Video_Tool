@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-22
+# last Update date : 2026-10-23
 """Draw 탭 통합 검증 (PLAN_DRAW_TAB 9.2, 12장, 13.8). 오프스크린 Qt 로 실제 위젯을 돌린다.
 
     python dev/check_draw.py [--keep]
@@ -843,6 +843,73 @@ def main() -> int:
         check(cv2.is_view_default(), "clear() resets the view")
         d2._load_video(d2._row)
         pump(app, 3, lambda: cv2._image is not None)
+
+        print("[15] per-video view state survives switching videos")
+        src_a = tmp / "testsrc.mp4"          # [14] 가 src 를 좌표로 덮었다
+        src2 = tmp / "testsrc_b.mp4"
+        shutil.copy(src_a, src2)
+        d2.add_paths([src2])
+        pump(app, 10, lambda: d2.model.rowCount() == 2 and d2.model.item(1).info is not None)
+        check(d2.controller.item() is not None and d2.controller.item().path == src_a,
+              "first video stays selected after adding a second")
+        d2.doc.dirty = False
+        d2.controller.seek(123)
+        pump(app, 3, lambda: cv2._image_frame == 123)
+        d2.set_timeline_zoom(50, 70)
+        d2.set_cache_range(10, 200)
+        d2.reset_view()
+        wheel(anchor, 2)
+        zoom0, pan0 = cv2.view_zoom(), cv2.view_pan()
+        check(abs(zoom0 - 1.25 ** 2) < 1e-9 and pan0 != (0.0, 0.0), f"first video: view {zoom0:.4f}, pan {pan0}")
+        d2.view.setCurrentIndex(d2.model.index(1))
+        check(pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src2
+                   and cv2._image is not None), "second video opens")
+        check(d2.controller.frame() == 0 and d2.timeline_zoom() == (0, 299) and d2.cache_range() == (0, 299),
+              f"first visit starts fresh: frame {d2.controller.frame()}, zoom {d2.timeline_zoom()}, cache {d2.cache_range()}")
+        d2.controller.seek(40)
+        pump(app, 3, lambda: cv2._image_frame == 40)
+        d2.set_timeline_zoom(100, 150)
+        d2.reset_view()
+        d2.view.setCurrentIndex(d2.model.index(0))
+        check(pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src_a
+                   and cv2._image_frame == 123), f"back to the first video at frame {d2.controller.frame()}")
+        check(d2.timeline_zoom() == (50, 70) and zp.zoom() == (50, 70) and (sl.minimum(), sl.maximum()) == (50, 70),
+              f"timeline zoom restored {d2.timeline_zoom()}")
+        check(d2.cache_range() == (10, 200) and cp.cache_range() == (10, 200) and sl.cache_range() == (10, 200),
+              f"cache range restored {d2.cache_range()}")
+        check(abs(cv2.view_zoom() - zoom0) < 1e-9 and near(QPointF(*cv2.view_pan()), QPointF(*pan0), 1e-6)
+              and d2.act_view_reset.isEnabled(), f"view zoom and pan restored {cv2.view_zoom():.4f} {cv2.view_pan()}")
+        check("Resumed where you left off: frame 123, timeline 50-70, cache range 10-200, view 156%." in d2.log.toPlainText(),
+              "log line")
+        d2.view.setCurrentIndex(d2.model.index(1))
+        check(pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src2
+                   and cv2._image_frame == 40), f"second video resumes at frame {d2.controller.frame()}")
+        check(d2.timeline_zoom() == (100, 150) and d2.cache_range() == (0, 299) and cv2.is_view_default(),
+              f"second video keeps its own state: zoom {d2.timeline_zoom()}, cache {d2.cache_range()}, fit view")
+        # 재생 중에 바꾸면 그 순간의 프레임을 기억한다
+        d2.controller.play()
+        pump(app, 1.0, lambda: d2.controller.frame() >= 45)
+        d2.view.setCurrentIndex(d2.model.index(0))
+        pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src_a and cv2._image_frame == 123)
+        check(not d2.controller.is_playing(), "switching pauses")
+        d2.view.setCurrentIndex(d2.model.index(1))
+        pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src2 and cv2._image is not None)
+        check(45 <= d2.controller.frame() < 299 and not d2.controller.is_playing(),
+              f"resumes paused at the frame where playback was when leaving ({d2.controller.frame()})")
+        # 리스트에서 지우면 잊는다 — 다시 넣으면 처음부터
+        d2.remove_rows([1])
+        pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src_a and cv2._image_frame == 123)
+        check(d2.model.rowCount() == 1 and d2.timeline_zoom() == (50, 70), "removing the second video falls back to the first, restored")
+        d2.add_paths([src2])
+        pump(app, 10, lambda: d2.model.rowCount() == 2 and d2.model.item(1).info is not None)
+        d2.view.setCurrentIndex(d2.model.index(1))
+        pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src2 and cv2._image is not None)
+        check(d2.controller.frame() == 0 and d2.timeline_zoom() == (0, 299), "re-added video starts fresh (state forgotten on remove)")
+        d2.view.setCurrentIndex(d2.model.index(0))
+        pump(app, 10, lambda: d2.controller.item() is not None and d2.controller.item().path == src_a and cv2._image_frame == 123)
+        d2.clear_list()
+        pump(app, 0.3)
+        check(d2.controller.item() is None and not d2._view_states, "Clear List forgets every state")
         w2.close()
         pump(app, 0.5)
     finally:

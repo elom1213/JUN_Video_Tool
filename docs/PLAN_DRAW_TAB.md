@@ -985,3 +985,34 @@ EXPORT_SUFFIX = "_draw"
 `dev/check_draw.py` [14] ALL OK — 휠 1칸 1.25배 · 사각형 배율 · 커서 x 보존(세로는 아직 캔버스보다 낮아 가운데), 양축이 커진 뒤 커서 아래 소스 자리 보존(1 px),
 2.44배에서 그은 선이 소스 (400,300)→(600,300), 우드래그 (−40, −30) 만큼 이동 · 그리지 않음, 양 구석 클램프, 우버튼 더블클릭 · `F` → 맞춤,
 80 % 축소는 가운데, 2칸 올리고 2칸 내리면 정확히 1.0, 최대 16 · 최소 0.25, 그리는 중 휠 무시, 해상도 변경 뒤 유지, `clear()` 되돌림.
+
+## 20. 2026-10-23 추가 요청 (v0.4.7) — 영상별 보기 상태 기억
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C10 | movie_01 을 임의 구간으로 확대하고 임의 프레임에서 멈춘 채 movie_02 를 더블클릭해 보다가, 다시 movie_01 로 돌아오면 0 프레임 · 전체 타임라인로 리셋되는 것을 고치기. 보던 프레임 · 확대 구간 등을 기억하고 그대로 보여 주기 | `DrawTab._view_states: dict[normcase_path, _ViewState]`. 영상을 떠날 때(`_load_video` · `_unload` 첫머리의 `_remember_view`) 상태를 적고, `_load_video` 가 같은 영상을 다시 열면 `_restore_view` 로 되돌린다 |
+
+**기억하는 것** — `_ViewState(frame, zoom, cache_range, view_zoom, view_pan)`
+- `frame`: 정지 프레임. 재생 중에 바꾸면 그 순간의 `controller.frame()` (set_video 가 pause 하기 전에 적는다) → 돌아오면 그 프레임에서 정지.
+- `zoom`: 타임라인 확대 `[lo, hi]` (18장). `cache_range`: 캐시 구간 (17장). `view_zoom` · `view_pan`: 캔버스 보기 배율 · 이동 (19장).
+- 그림(`DrawingDocument`)은 이미 사이드카로 영상별 저장 · 자동 로드되므로 여기 들지 않는다. 브러시 · 고스트 · 반전 · 해상도는 영상이 아닌 **툴** 설정이라 들지 않는다.
+
+**되돌리는 순서** (`_load_video`)
+1. `_remember_view()` — 떠나는 영상 (controller 의 현재 item). `_unload` 도 첫머리에서 같은 일을 하므로 프로브 전 · 음성 전용 파일로 바꿀 때도 적힌다.
+2. `state = _view_states.get(normcase_path(item.path))`. `controller.set_video(..., frame=state.frame if state else 0)` — 해상도 변경(17장)이 쓰던 `frame` 인자를 그대로 쓴다.
+3. `_set_cache_bounds` · `_set_zoom_bounds` 로 전체로 둔 뒤, state 가 있으면 `_restore_view`:
+   `set_cache_range(*state.cache_range)` → `_zoom = normalize_zoom(*state.zoom, last)` + 패널 · 트랜스포트 → `canvas.set_view(zoom, *pan)`.
+   길이가 EOF 로 짧아졌던 영상도 `normalize_*` 가 잘라 맞춘다. `set_timeline_zoom` 을 거치지 않는 이유는 "Timeline zoomed to …" 로그를 내지 않기 위해서다.
+4. 로그 한 줄 `Resumed where you left off: frame N[, timeline a-b][, cache range a-b][, view 156%].` — 기본값(전체 · 맞춤)인 항목은 생략.
+
+**`VideoCanvas.set_view(zoom, pan_x, pan_y)`** — `set_view_zoom` 은 커서(또는 중심) 기준 `zoom_about` 을 거쳐 pan 을 새로 계산하므로 저장한 pan 을 그대로 놓을 수 없다.
+`set_view` 는 배율을 `MIN/MAX` 로 자르고 pan 을 `clamp_pan` 만 거쳐 `_set_view` 에 넣는다. 캔버스 크기가 달라져 있어도 클램프가 맞춘다.
+`set_source_size` 는 크기가 다를 때만 맞춤으로 되돌리는 19장 규칙 그대로이고, 그 뒤 `set_view` 가 기억한 보기를 올린다.
+처음 여는 영상(state 없음)은 19장 규칙 그대로 — 같은 크기면 직전 보기를 이어받고, 크기가 다르면 맞춤.
+
+**잊는 때** — `remove_rows` (지워지는 행의 경로를 모델에서 빼기 전에 pop), `clear_list` (`_view_states.clear()`).
+설정 파일에는 쓰지 않는다 (세션 한정). 키는 `normcase_path` 라 모델의 중복 판정과 같은 기준이다.
+
+검증: `dev/check_draw.py` [15] — 영상 A 를 123 프레임 · 타임라인 50-70 · 캐시 10-200 · 휠 2칸(156 %) 으로 두고 B 로 바꾸면 B 는 0 프레임 · 전체,
+B 를 40 프레임 · 100-150 으로 두고 A 로 돌아오면 A 의 네 값이 모두 복원되고 로그 한 줄, 다시 B 는 40 · 100-150 · 맞춤,
+B 재생 중에 A 로 바꾸면 정지되고 돌아오면 그 순간 프레임에서 정지, B 를 지우면 A 복원 · 다시 넣은 B 는 처음부터, `Clear List` 뒤 `_view_states` 비어 있음.

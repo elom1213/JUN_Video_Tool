@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-22
+# last Update date : 2026-10-23
 """영상 프레임 + 그림 캔버스 (PLAN_DRAW_TAB 5.2, 13.2, 13.3, 16장, 19장).
 
 마우스: 좌드래그 = 현재 툴(draw: 스트로크 / erase: 지우기), 가운데 드래그 = 스크럽, 우드래그 = 보기 이동(pan),
@@ -185,6 +185,16 @@ class VideoCanvas(QWidget):
             return
         self._set_view(self._zoom, clamp_pan(self.width(), self.height(), self._src_w, self._src_h, self._zoom,
                                              float(pan_x), float(pan_y)))
+
+    def set_view(self, zoom: float, pan_x: float, pan_y: float) -> None:
+        """배율 · 이동을 한 번에 그대로 놓는다 (영상을 다시 골랐을 때 기억해 둔 보기로 — 20장). 범위 밖은 잘린다."""
+        if self._src_w <= 0 or self._src_h <= 0:
+            return
+        zoom = min(max(float(zoom), C.DRAW_VIEW_ZOOM_MIN), C.DRAW_VIEW_ZOOM_MAX)
+        if abs(zoom - 1.0) < 1e-6:
+            zoom = 1.0
+        self._set_view(zoom, clamp_pan(self.width(), self.height(), self._src_w, self._src_h, zoom,
+                                       float(pan_x), float(pan_y)))
 
     def reset_view(self) -> None:
         """배율 1 · 이동 0 (위젯에 맞춤)."""

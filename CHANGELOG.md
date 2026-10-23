@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7 — 2026-10-23
+
+- **Draw 탭이 영상별 보기 상태를 기억한다**: 다른 영상으로 바꾸면 떠나는 영상의 **정지 프레임 · 타임라인 확대 구간 · 캐시 구간 ·
+  캔버스 보기 배율 과 위치**를 적어 두고, 그 영상을 다시 고르면 그 상태 그대로 열린다 (전에는 늘 0 프레임 · 전체 타임라인으로 돌아갔다).
+  재생 중에 바꾸면 그 순간의 프레임에서 정지한 채로 이어 본다. 처음 여는 영상은 전처럼 0 프레임 · 전체 구간.
+  - 로그에 `Resumed where you left off: frame 123, timeline 50-70, cache range 10-200, view 156%.` 한 줄 (기본값인 항목은 생략).
+  - 리스트에서 지우거나 `Clear List` 하면 잊는다. 세션 안에서만 기억하고 설정 파일에는 쓰지 않는다.
+  - 영상 길이가 EOF 로 짧게 밝혀진 뒤에도 구간은 잘라서 맞춘다 (`normalize_zoom` · `normalize_cache_range`).
+- `DrawTab._ViewState` · `_remember_view` · `_restore_view`, `VideoCanvas.set_view`. `dev/check_draw.py` [15]. PLAN_DRAW_TAB 20.
+
 ## 0.4.6 — 2026-10-22
 
 - **Draw 탭 캔버스 보기 확대 · 이동**: 영상 위에서 **마우스 휠**을 굴리면 커서 아래 자리를 고정한 채 1.25 배씩 확대 · 축소된다

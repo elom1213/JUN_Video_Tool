@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-22
-"""Draw 탭 (PLAN_DRAW_TAB 5장, 13장, 16 ~ 19장).
+# last Update date : 2026-10-23
+"""Draw 탭 (PLAN_DRAW_TAB 5장, 13장, 16 ~ 20장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
 앞뒤 프레임의 선은 고스트로 겹쳐 보이고, 그림은 영상 옆 사이드카 `<영상이름>.draw.json` 으로 저장 · 자동 로드된다.
+영상을 바꾸면 보던 프레임 · 타임라인 확대 · 캐시 구간 · 보기 배율을 영상별로 기억해 두고, 다시 고르면 그대로 돌아간다 (20장).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QItemSelectionModel, QSize, Qt, QUrl, Signal
@@ -20,12 +22,12 @@ from ..config import constants as C
 from ..config.settings import AppSettings
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
 from ..core.frame_decoder import normalize_scale
-from .widgets.draw.geometry import normalize_zoom
+from .widgets.draw.geometry import normalize_zoom, zoom_label
 from ..core.memory_info import (format_gib, full_cache_budget, normalize_cache_range, plan_cache_window,
                                 reserve_bytes, system_memory)
 from ..core.models import MediaInfo, VideoItem
 from ..core.thumbnail import representative_time
-from ..core.utils import human_size
+from ..core.utils import human_size, normcase_path
 from .convert_tab import VIDEO_FILTER
 from .icons import icon
 from .widgets.draw.audio_player import AudioPlayer
@@ -50,6 +52,16 @@ def _doc_summary(doc: DrawingDocument) -> str:
     n_frames = len(doc.frames_with_strokes())
     n = doc.stroke_count()
     return f"{n_frames} frame{'s' if n_frames != 1 else ''}, {n} stroke{'s' if n != 1 else ''}"
+
+
+@dataclass
+class _ViewState:
+    """영상 하나의 보기 상태 — 다른 영상으로 바꿀 때 기억해 두고 다시 고르면 되돌린다 (20장). 세션 안에서만 산다."""
+    frame: int
+    zoom: tuple[int, int]               # 타임라인 확대 [lo, hi]
+    cache_range: tuple[int, int]
+    view_zoom: float                    # 캔버스 보기 배율 (1 = 맞춤)
+    view_pan: tuple[float, float]
 
 
 class DrawTab(QWidget):
@@ -77,6 +89,7 @@ class DrawTab(QWidget):
         self._decode_scale = C.DRAW_DECODE_SCALE_DEFAULT   # 디코드 해상도 (원본의 %)
         self._cache_range = (0, 0)             # 캐시 구간 [start, end] (영상을 열면 전체로 맞춘다)
         self._zoom = (0, 0)                    # 타임라인 양 끝 프레임 [lo, hi] (영상을 열면 전체)
+        self._view_states: dict[str, _ViewState] = {}   # normcase_path(영상) → 떠날 때의 보기 상태 (20장)
 
         self._build_actions()
         self._build_ui()
@@ -531,6 +544,9 @@ class DrawTab(QWidget):
             if not self._maybe_save():
                 return
             self._unload()
+        for r in rows:
+            if 0 <= r < self.model.rowCount():
+                self._view_states.pop(normcase_path(self.model.item(r).path), None)
         self.model.remove_rows(rows)
         # 위쪽 행이 지워지면 현재 영상의 행 번호가 바뀐다 (currentChanged 는 오지 않는다)
         item = self.controller.item()
@@ -542,6 +558,7 @@ class DrawTab(QWidget):
         self._unload()
         self.probe_loader.cancel_all()
         self.model.clear()
+        self._view_states.clear()
 
     def _open_folder(self, row: int) -> None:
         if 0 <= row < self.model.rowCount():
@@ -595,6 +612,7 @@ class DrawTab(QWidget):
         self._load_video(row)
 
     def _unload(self) -> None:
+        self._remember_view()
         self.controller.set_video(None, self.settings.hwaccel)
         self.doc = None
         self._doc_path = None
@@ -625,15 +643,19 @@ class DrawTab(QWidget):
             self.canvas.clear("This file has no video stream. Convert it to WAV in the Convert tab.")
             return
         info = item.info
+        self._remember_view()                                    # 떠나는 영상의 보기 상태를 적어 둔다
+        state = self._view_states.get(normcase_path(item.path))  # 전에 보던 영상이면 그 상태로 돌아간다
         self._row = row
         self._last_error = ""
-        self.controller.set_video(item, self.settings.hwaccel, self._decode_scale)
+        self.controller.set_video(item, self.settings.hwaccel, self._decode_scale, state.frame if state else 0)
         self.canvas.set_source_size(info.width, info.height)
         self.cache_panel.set_source_size(info.width, info.height)
         self.transport.set_range(self.controller.last_frame())
         self.transport.set_has_audio(info.has_audio)
         self._set_cache_bounds(self.controller.last_frame())     # 새 영상은 전체 구간부터
         self._set_zoom_bounds(self.controller.last_frame())      # 타임라인도 전체부터
+        if state is not None:
+            self._restore_view(state)
         self._doc_path = None
         doc = self._read_sidecar(item)
         self._set_document(doc)
@@ -646,6 +668,32 @@ class DrawTab(QWidget):
                             f"{format_gib(info.frame_count * spec.frame_bytes)}.")
         self._refresh_cache_ui()
         self.canvas.setFocus()
+
+    # ------------------------------------------------------------------ 영상별 보기 상태 (20장)
+    def _remember_view(self) -> None:
+        """지금 영상의 프레임 · 타임라인 확대 · 캐시 구간 · 보기 배율을 적어 둔다. 영상이 없으면 아무 일도 없다."""
+        item = self.controller.item()
+        if item is None:
+            return
+        self._view_states[normcase_path(item.path)] = _ViewState(
+            self.controller.frame(), self._zoom, self._cache_range, self.canvas.view_zoom(), self.canvas.view_pan())
+
+    def _restore_view(self, state: _ViewState) -> None:
+        """적어 둔 상태로 되돌린다. 프레임은 set_video 가 이미 열었고, 길이는 바뀔 수 있으니 구간은 잘라서 맞춘다."""
+        last = self.controller.last_frame()
+        self.set_cache_range(*state.cache_range)
+        self._zoom = normalize_zoom(*state.zoom, last)
+        self.zoom_panel.set_zoom(*self._zoom)
+        self.transport.set_zoom(*self._zoom)
+        self.canvas.set_view(state.view_zoom, *state.view_pan)
+        parts = [f"frame {self.controller.frame()}"]
+        if self._zoom != (0, last):
+            parts.append(f"timeline {self._zoom[0]}-{self._zoom[1]}")
+        if not self._range_is_whole():
+            parts.append(f"cache range {self._cache_range[0]}-{self._cache_range[1]}")
+        if not self.canvas.is_view_default():
+            parts.append(f"view {zoom_label(self.canvas.view_zoom()) or '100%'}")
+        self.log.append("Resumed where you left off: " + ", ".join(parts) + ".")
 
     # ================================================================== 프레임 캐시
     def _video_name(self) -> str | None:
