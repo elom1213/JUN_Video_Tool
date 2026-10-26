@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-26
 """그림 입힌 영상 내보내기(burn-in) 명령 생성 (PLAN_DRAW_TAB 13.4). PySide6 비의존.
 
 원본 디코드 · 스케일 · 인코딩은 ffmpeg 한 프로세스가 하고, 파이썬은 출력 크기의 RGBA 오버레이 프레임만
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import image_sequence
 from .converters.base import BaseConverter
 from .converters.common import fmt_fps
 from .converters.gif_converter import GifConverter, GifOptions
@@ -33,9 +34,9 @@ def build_burnin_command(ffmpeg: Path, item: VideoItem, converter: BaseConverter
     w, h = overlay_size(item, converter, options)
     fps = fmt_fps(info.fps)
     cmd: list[str] = [str(ffmpeg), "-hide_banner", "-y", "-nostats", "-progress", "pipe:1"]
-    if getattr(options, "hwaccel", "none") == "auto":
+    if getattr(options, "hwaccel", "none") == "auto" and not info.sequence:
         cmd += ["-hwaccel", "auto"]
-    cmd += ["-i", str(item.path)]
+    cmd += image_sequence.input_args(item.path, info.fps)
     cmd += ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{w}x{h}", "-framerate", fps, "-i", "-"]
     head = (f"[0:v]scale={w}:{h}:flags=lanczos,setsar=1,setpts=N/({fps})/TB[base];"
             f"[1:v]setpts=N/({fps})/TB[ov];"

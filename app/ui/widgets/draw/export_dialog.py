@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-26
 """그림 입힌 영상 내보내기 다이얼로그 (PLAN_DRAW_TAB 13.4).
 
 포맷별 옵션 패널은 Convert 탭과 같은 클래스를 쓰되, 설정은 `export/<format_id>/options_json` 에 따로 둔다.
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QHBox
 
 from ....config import constants as C
 from ....config.settings import AppSettings
-from ....core import ffmpeg_locator
+from ....core import ffmpeg_locator, image_sequence
 from ....core.converters import registry
 from ....core.converters.base import BaseConverter
 from ....core.drawing import DrawingDocument
@@ -35,7 +35,7 @@ class ExportDialog(QDialog):
     def __init__(self, settings: AppSettings, item: VideoItem, doc: DrawingDocument,
                  ghost: tuple[bool, int, int, float], parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Export with Drawing — {item.path.name}")
+        self.setWindowTitle(f"Export with Drawing — {image_sequence.display_name(item.path)}")
         self.setMinimumWidth(480)
         self.resize(520, 640)
         self.settings = settings
@@ -203,7 +203,7 @@ class ExportDialog(QDialog):
         self._set_running(True)
         self.bar.setValue(0)
         self.status.setText(f"Exporting to {out.name}…")
-        self.log.emit(f"Exporting {self.item.path.name} -> {out.name} ({self._converter.display_name}"
+        self.log.emit(f"Exporting {self.image_sequence.display_name(item.path)} -> {out.name} ({self._converter.display_name}"
                       f"{', with ghosting' if ghost else ''}).")
         self.worker.start()
 

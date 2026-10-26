@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """프레임 구간 편집 패널 (PLAN 6.7). 음성 파일은 1 ms 단위 구간 (MediaInfo.audio_only)."""
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPus
                                QVBoxLayout, QWidget)
 
 from ...config import constants as C
+from ...core import image_sequence
 from ...core.models import FrameRange, VideoItem
 from ...core.size_estimator import output_frames
 from ...core.thumbnail import clamp_time
@@ -140,7 +141,7 @@ class FrameRangePanel(QGroupBox):
             return
         self._set_enabled(True)
         info = item.info
-        self.hint_label.setText(item.path.name + ("  (audio - range in milliseconds)" if info.audio_only else ""))
+        self.hint_label.setText(image_sequence.display_name(item.path) + ("  (audio - range in milliseconds)" if info.audio_only else ""))
         for sp in (self.start_spin, self.end_spin):
             sp.setSuffix(" ms" if info.audio_only else "")
         rng = item.effective_range()

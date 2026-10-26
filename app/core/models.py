@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """코어 데이터 모델 (PLAN 5.1). PySide6 비의존."""
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class MediaInfo:
     audio_only: bool = False
     sample_rate: int = 0         # 첫 오디오 스트림 (없으면 0)
     channels: int = 0
+    sequence: bool = False       # 이미지 시퀀스 (core/image_sequence.py): fps = 설정값, codec = 첫 프레임 코덱
 
     @property
     def aspect(self) -> float:

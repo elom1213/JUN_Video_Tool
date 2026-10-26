@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-26
 """메인 윈도우 (PLAN_DRAW_TAB 5.8): 탭 · 메뉴 · 전역 설정 · 시작 점검 · 종료만 담당한다.
 
 변환 기능은 `ConvertTab`, 드로오버 기능은 `DrawTab` 이 가진다. 두 탭은 같은 메서드 이름(3.3)을 가지므로
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QTa
 
 from ..config.settings import AppSettings
 from ..config.version import APP_NAME, VERSION
-from ..core import ffmpeg_locator, shell_integration
+from ..core import ffmpeg_locator, image_sequence, shell_integration
 from .convert_tab import ConvertTab
 from .dependency_dialog import DependencyDialog
 from .draw_tab import DrawTab
@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 600)
 
         self.settings = AppSettings()
+        image_sequence.set_sequence_fps(self.settings.sequence_fps)
         # 썸네일 캐시는 두 탭이 공유한다 (같은 파일을 양쪽에 넣어도 1회 추출)
         self.thumb_loader = ThumbnailLoader(self)
         self._dep_dialog: DependencyDialog | None = None
@@ -239,6 +240,7 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
+            image_sequence.set_sequence_fps(self.settings.sequence_fps)
             self.convert_tab.on_settings_changed()
 
     def open_dependencies(self, auto_install: bool = False) -> None:

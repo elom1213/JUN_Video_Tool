@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-26
 """디코더 스레드 + LRU 프레임 캐시 (PLAN_DRAW_TAB 5.3) + 전체 캐시 (Cache Whole Video).
 
 UI 스레드는 request_frame / start_stream / stop_stream / set_display_frame 만 부른다.
@@ -23,7 +23,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from ....config import constants as C
-from ....core import ffmpeg_locator
+from ....core import ffmpeg_locator, image_sequence
 from ....core.frame_decoder import DecodeSpec, FrameStream, make_decode_spec
 from ....core.memory_info import format_gib, system_memory
 from ....core.models import MediaInfo
@@ -270,7 +270,7 @@ class FrameProvider(QThread):
                 return False
             pin = self._pinned.get(self._key)
             if pin is None:
-                pin = self._pinned[self._key] = _Pinned(self._path.name, self._spec.frame_bytes)
+                pin = self._pinned[self._key] = _Pinned(image_sequence.display_name(self._path), self._spec.frame_bytes)
             self._pin = pin
             self._fill_token += 1
             token = self._fill_token

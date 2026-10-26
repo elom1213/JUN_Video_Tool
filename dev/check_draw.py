@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-23
+# last Update date : 2026-10-26
 """Draw 탭 통합 검증 (PLAN_DRAW_TAB 9.2, 12장, 13.8). 오프스크린 Qt 로 실제 위젯을 돌린다.
 
     python dev/check_draw.py [--keep]
@@ -911,6 +911,72 @@ def main() -> int:
         pump(app, 0.3)
         check(d2.controller.item() is None and not d2._view_states, "Clear List forgets every state")
         w2.close()
+        pump(app, 0.5)
+
+        print("[16] image sequence as a video (shot_v01.1001.png ...)")
+        from app.core import image_sequence
+        from app.core.converters import Mp4Converter, Mp4Options
+        from app.ui.widgets.draw.export_worker import ExportWorker
+        seq_dir = tmp / "seq"
+        seq_dir.mkdir()
+        subprocess.run([str(ff), "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                        "-i", "testsrc=size=640x360:rate=24", "-frames:v", "48", "-start_number", "1001",
+                        str(seq_dir / "shot_v01.%04d.png")], check=True)
+        frames = sorted(seq_dir.glob("*.png"))
+        w3 = MainWindow()
+        w3.show()
+        pump(app, 0.3)
+        w3.tabs.setCurrentIndex(1)
+        d3, c3 = w3.draw_tab, w3.draw_tab.controller
+        d3.add_paths(list(reversed(frames)))
+        check(d3.model.rowCount() == 1 and d3.model.item(0).path == frames[0], "48 dropped frames -> one item (first frame)")
+        check(d3.model.data(d3.model.index(0)) == "shot_v01.[1001-1048].png", f"list name {d3.model.data(d3.model.index(0))}")
+        check(pump(app, 10, lambda: c3.item() is not None and d3.canvas._image is not None), "sequence opens, frame 0 shown")
+        si = c3.item().info
+        check(si is not None and si.sequence and si.frame_count == 48 and si.fps == image_sequence.sequence_fps(),
+              f"probe: {si.frame_count if si else '?'} frames at {si.fps if si else '?'} fps")
+        check("Image sequence · 48 frames" in str(d3.model.data(d3.model.index(0), d3.model.InfoTextRole)), "info text")
+        c3.seek(30)
+        pump(app, 5, lambda: d3.canvas._image_frame == 30 and d3.provider.cached(30) is not None)
+        spec3 = make_decode_spec(probe(frames[30]))
+        fs = FrameStream(ff, frames[30], spec3, 0, "none")
+        ref30 = fs.read_frame()
+        fs.close()
+        img = d3.provider.cached(30)
+        check(img is not None and ref30 is not None and md5(qimage_bytes(img)) == md5(ref30[1]),
+              "frame 30 == shot_v01.1031.png")
+        check(w3.windowTitle().endswith("shot_v01.[1001-1048].png"), f"title {w3.windowTitle()}")
+        cv3 = d3.canvas
+        d3.brush_panel.set_state("#ff0000", 16, 64)
+        p1, p2 = cv3.screen_point(100, 180), cv3.screen_point(540, 180)
+        QTest.mousePress(cv3, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, p1.toPoint())
+        for k in range(1, 11):
+            QTest.mouseMove(cv3, QPoint(int(p1.x() + (p2.x() - p1.x()) * k / 10), int(p1.y())))
+        QTest.mouseRelease(cv3, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, p2.toPoint())
+        pump(app, 0.1)
+        check(d3.doc is not None and len(d3.doc.strokes_at(30)) == 1, "stroke on frame 30 of the sequence")
+        check(d3.save() and sidecar_path(frames[0]).is_file(), f"sidecar {sidecar_path(frames[0]).name}")
+        out3 = tmp / "seq_draw.mp4"
+        wk = ExportWorker(ff, c3.item(), Mp4Converter(), Mp4Options(quality=90, audio="aac", hwaccel="auto"), out3,
+                          d3.doc, None)
+        res3: dict = {}
+        wk.finished_ok.connect(lambda p, size, sec, r=res3: r.update(ok=True))
+        wk.failed.connect(lambda m, r=res3: r.update(err=m))
+        wk.start()
+        pump(app, 60, lambda: wk.isFinished())
+        pump(app, 0.2)
+        check("ok" in res3, f"export sequence + drawing to MP4 {res3.get('err', '')}")
+        if out3.is_file():
+            oi = probe(out3)
+            fr = read_frames(ff, out3, [29, 30])
+            on, off = pixel(fr[30], 320, 180), pixel(fr[29], 320, 180)
+            check(oi.frame_count == 48 and not oi.has_audio, f"export: {oi.frame_count} frames, audio={oi.has_audio}")
+            check(on[0] > 180 and on[1] < 90 and not (off[0] > 180 and off[1] < 90), f"stroke only on frame 30 {on} / {off}")
+        w3.tabs.setCurrentIndex(0)
+        w3.convert_tab.add_paths(frames[5:9])
+        check(w3.convert_tab.model.rowCount() == 1 and w3.convert_tab.model.item(0).path == frames[0],
+              "Convert tab: dropping some frames adds the whole sequence once")
+        w3.close()
         pump(app, 0.5)
     finally:
         QSettings("JUN", "JUN_Video_Tool_check_draw").clear()

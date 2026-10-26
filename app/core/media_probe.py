@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """영상 · 음성 메타데이터 프로브 (PLAN 5.2). ffprobe JSON 우선, 없으면 ffmpeg stderr 파싱.
 
 비디오 스트림이 없고 오디오만 있으면 음성 전용 MediaInfo (audio_only, 1 프레임 = 1 ms) 를 돌려준다.
+이미지 시퀀스는 첫 프레임만 프로브해 크기 · 코덱을 얻고, 프레임 수는 이어지는 파일 수, fps 는 sequence_fps() 다.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import constants as C
+from . import image_sequence
 from .ffmpeg_locator import find_ffmpeg, find_ffprobe
 from .models import MediaInfo
 from .utils import subprocess_flags
@@ -220,11 +222,56 @@ def _probe_ffmpeg_stderr(ffmpeg: Path, path: Path) -> MediaInfo:
     return parse_ffmpeg_stderr(out.stderr or "", size)
 
 
+def sequence_info(still: MediaInfo, count: int, fps: float, size_bytes: int) -> MediaInfo:
+    """첫 프레임(정지 이미지) 프로브 결과 → 시퀀스 전체 MediaInfo. 오디오는 없다."""
+    fps = float(fps) if fps > 0 else C.SEQUENCE_FPS_DEFAULT
+    count = max(1, int(count))
+    return MediaInfo(width=still.width, height=still.height, fps=fps, duration=count / fps, frame_count=count,
+                     codec=still.codec, size_bytes=size_bytes, sequence=True)
+
+
+def _probe_still(path: Path) -> MediaInfo:
+    """이미지 한 장. ffprobe 는 이미지의 duration · fps 를 0 이나 엉뚱한 값으로 줄 수 있어 크기 · 코덱만 믿는다."""
+    ffprobe = find_ffprobe()
+    if ffprobe is not None:
+        cmd = [str(ffprobe), "-v", "error", "-select_streams", "v:0",
+               "-show_entries", "stream=width,height,codec_name", "-of", "json", str(path)]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                 timeout=60, creationflags=subprocess_flags())
+        except subprocess.TimeoutExpired as exc:
+            raise ProbeError("ffprobe timed out.") from exc
+        if out.returncode != 0:
+            raise ProbeError((out.stderr or "ffprobe failed.").strip().splitlines()[-1])
+        try:
+            st = (json.loads(out.stdout).get("streams") or [{}])[0]
+        except (json.JSONDecodeError, IndexError) as exc:
+            raise ProbeError("ffprobe returned invalid JSON.") from exc
+        w, h = _int(st.get("width")), _int(st.get("height"))
+        codec = str(st.get("codec_name") or "unknown")
+    else:
+        ffmpeg = find_ffmpeg()
+        if ffmpeg is None:
+            raise ProbeError("ffmpeg/ffprobe not found.")
+        out = subprocess.run([str(ffmpeg), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=60, creationflags=subprocess_flags())
+        vm = VIDEO_RE.search(out.stderr or "")
+        if not vm:
+            raise ProbeError("Not a readable image.")
+        codec, w, h = vm.group(1), int(vm.group(2)), int(vm.group(3))
+    if w <= 0 or h <= 0:
+        raise ProbeError("Image has no valid dimensions.")
+    return MediaInfo(width=w, height=h, fps=0.0, duration=0.0, frame_count=1, codec=codec, size_bytes=0)
+
+
 def probe(path: Path) -> MediaInfo:
     """경로의 영상 메타데이터. 실패 시 ProbeError."""
     path = Path(path)
     if not path.is_file():
         raise ProbeError("File not found.")
+    seq = image_sequence.sequence_of(path)
+    if seq is not None:
+        return sequence_info(_probe_still(path), seq.count, image_sequence.sequence_fps(), seq.total_bytes())
     ffprobe = find_ffprobe()
     if ffprobe is not None:
         return _probe_ffprobe(ffprobe, path)

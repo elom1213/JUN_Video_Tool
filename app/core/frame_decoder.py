@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-19
+# last Update date : 2026-10-26
 """Draw 탭 프레임 디코더 (PLAN_DRAW_TAB 4.1, 13.1).
 
 ffmpeg 한 프로세스가 시작 프레임부터 순차로 RGB24 raw 프레임을 내보내고, 우리는 w*h*3 바이트씩 읽는다.
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..config import constants as C
+from . import image_sequence
 from .models import MediaInfo
 from .utils import subprocess_flags
 
@@ -84,11 +85,12 @@ def seek_time(frame: int, fps: float) -> float:
 def build_stream_command(ffmpeg: Path, path: Path, spec: DecodeSpec, start_frame: int, hwaccel: str,
                          legacy_vsync: bool = False) -> list[str]:
     cmd = [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin"]
-    if hwaccel == "auto":
+    seq = image_sequence.is_image(path)
+    if hwaccel == "auto" and not seq:
         cmd += ["-hwaccel", "auto"]
     if start_frame > 0:
         cmd += ["-ss", f"{seek_time(start_frame, spec.fps):.6f}"]
-    cmd += ["-i", str(path), "-an", "-sn"]
+    cmd += image_sequence.input_args(path, spec.fps) + ["-an", "-sn"]
     cmd += ["-vsync", "0"] if legacy_vsync else ["-fps_mode", "passthrough"]
     cmd += ["-vf", f"scale={spec.out_w}:{spec.out_h}:flags=bilinear,format=rgb24",
             "-f", "rawvideo", "-"]

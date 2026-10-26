@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """Convert 탭 (PLAN_DRAW_TAB 3장). v0.2.x 의 MainWindow 본문을 그대로 옮긴 것 — 동작 · 단축키 · 설정 키는 같다."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QLabel, QMes
 
 from ..config import constants as C
 from ..config.settings import AppSettings
-from ..core import ffmpeg_locator
+from ..core import ffmpeg_locator, image_sequence
 from ..core.converters import registry
 from ..core.converters.base import BaseConverter
 from ..core.job_runner import JobRunner
@@ -36,8 +36,10 @@ def _filter(label: str, exts: frozenset[str]) -> str:
 
 
 MEDIA_FILTER = ";;".join((_filter("Media files", C.SUPPORTED_EXTENSIONS), _filter("Video files", C.VIDEO_EXTENSIONS),
-                          _filter("Audio files", C.AUDIO_EXTENSIONS), "All files (*.*)"))
-VIDEO_FILTER = ";;".join((_filter("Video files", C.DRAW_EXTENSIONS), "All files (*.*)"))
+                          _filter("Audio files", C.AUDIO_EXTENSIONS), _filter("Image sequences", C.IMAGE_EXTENSIONS),
+                          "All files (*.*)"))
+VIDEO_FILTER = ";;".join((_filter("Video files", C.DRAW_EXTENSIONS), _filter("Image sequences", C.IMAGE_EXTENSIONS),
+                          "All files (*.*)"))
 
 
 class ConvertTab(QWidget):
@@ -283,7 +285,8 @@ class ConvertTab(QWidget):
         if self._options_panel is not None and hasattr(self._options_panel, "set_hwaccel"):
             self._options_panel.set_hwaccel(self.settings.hwaccel)  # type: ignore[attr-defined]
         self.log.append(f"Settings saved: {self.settings.concurrency} parallel, hwaccel={self.settings.hwaccel}, "
-                        f"sample estimates {'on' if self.settings.estimate_enabled else 'off'}.")
+                        f"sample estimates {'on' if self.settings.estimate_enabled else 'off'}, "
+                        f"image sequences at {self.settings.sequence_fps:g} fps.")
         self._schedule_estimates()
 
     def request_close(self) -> bool:
@@ -471,7 +474,7 @@ class ConvertTab(QWidget):
         if row < 0:
             return
         self.model.set_info(row, None, error)
-        self.log.append_error(f"[{path.name}] Probe failed: {error}")
+        self.log.append_error(f"[{image_sequence.display_name(path)}] Probe failed: {error}")
         if self.view.currentIndex().row() == row:
             self._current_changed(row)
 
@@ -566,7 +569,7 @@ class ConvertTab(QWidget):
         r = self._row_for_key(row, key)
         if r is not None:
             it = self.model.item(r)
-            self.log.append(f"[{it.path.name}] Size estimate failed: {error}")
+            self.log.append(f"[{image_sequence.display_name(it.path)}] Size estimate failed: {error}")
 
     def _row_for_key(self, row: int, key: str) -> int | None:
         if 0 <= row < self.model.rowCount() and self.model.item(row).est_key == key:
@@ -627,20 +630,22 @@ class ConvertTab(QWidget):
             it = self.model.item(r)
             if it.info is None:
                 self.model.update_item(r, status=ItemStatus.SKIPPED, message=it.probe_error or "No media info")
-                self.log.append(f"[{it.path.name}] Skipped: {it.probe_error or 'not probed yet'}")
+                self.log.append(f"[{image_sequence.display_name(it.path)}] Skipped: {it.probe_error or 'not probed yet'}")
                 continue
             reason = self._converter.skip_reason(it)
             if reason is not None:
                 self.model.update_item(r, status=ItemStatus.SKIPPED, message=reason[:1].upper() + reason[1:])
-                self.log.append(f"[{it.path.name}] Skipped for {self._converter.display_name}: {reason}.")
+                self.log.append(f"[{image_sequence.display_name(it.path)}] Skipped for "
+                                f"{self._converter.display_name}: {reason}.")
                 continue
             out = make_output_path(it.path, options.output_dir, options.suffix, self._converter.extension,
                                    options.overwrite, taken)
             if len(str(out)) > C.MAX_OUTPUT_PATH_LEN:
-                warnings.append(f"{it.path.name}: output path is too long for Windows (>{C.MAX_OUTPUT_PATH_LEN} chars).")
+                warnings.append(f"{image_sequence.display_name(it.path)}: output path is too long for Windows "
+                                f"(>{C.MAX_OUTPUT_PATH_LEN} chars).")
             w = self._converter.estimate_warning(it, options)
             if w:
-                warnings.append(f"{it.path.name}: {w}")
+                warnings.append(f"{image_sequence.display_name(it.path)}: {w}")
             jobs.append((r, ConvertJob(item=it, options=options, output_path=out)))
         if not jobs:
             self.log.append_error("No convertible items (all skipped).")
@@ -695,7 +700,7 @@ class ConvertTab(QWidget):
         self.model.update_item(row, progress=pct)
 
     def _job_finished(self, row: int, res: ConvertResult) -> None:
-        name = res.job.item.path.name
+        name = image_sequence.display_name(res.job.item.path)
         if res.canceled:
             self.model.update_item(row, status=ItemStatus.CANCELED, message="Canceled", progress=0)
             self.log.append(f"[{name}] Canceled.")

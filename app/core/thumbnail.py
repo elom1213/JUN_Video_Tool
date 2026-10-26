@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-26
 """정지 프레임 추출 (PLAN 5.3). ffmpeg image2pipe → PNG bytes."""
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
 
+from . import image_sequence
 from .ffmpeg_locator import find_ffmpeg
 from .models import MediaInfo
 from .utils import subprocess_flags
@@ -37,7 +38,7 @@ def extract_frame_png(path: Path, time_sec: float, max_width: int = 320, timeout
         raise ThumbnailError("ffmpeg not found.")
     cmd = [
         str(ffmpeg), "-hide_banner", "-loglevel", "error",
-        "-ss", f"{max(0.0, time_sec):.3f}", "-i", str(path),
+        "-ss", f"{max(0.0, time_sec):.3f}", *image_sequence.input_args(path),
         "-frames:v", "1", "-vf", f"scale='min({int(max_width)},iw)':-2",
         "-f", "image2pipe", "-vcodec", "png", "-",
     ]

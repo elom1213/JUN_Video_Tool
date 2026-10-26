@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """순수 유틸리티: 프레임↔초 변환, 크기 계산, 출력 경로, 서브프로세스 플래그."""
 from __future__ import annotations
 
@@ -106,11 +106,15 @@ def make_output_path(src: Path, out_dir: Path | None, suffix: str, ext: str, ove
                      taken: set[str] | None = None) -> Path:
     """<out_dir or src.parent>/<stem><suffix><ext>. overwrite=False 이고 존재하면 _001, _002 … 를 붙인다.
 
+    이미지 시퀀스(src = 첫 프레임)는 번호를 뗀 이름을 stem 으로 쓴다 (img.001.jpg → img_gif.gif).
+
     후보가 원본 파일 자신이면(GIF → GIF, 같은 폴더, 빈 접미사) overwrite 여부와 무관하게 번호를 붙인다.
     taken: 같은 배치에서 이미 배정한 출력 경로(normcase). 이름이 겹치는 원본(voice.mp3 · voice.wav → voice.wav)이
     서로 덮어쓰지 않게 overwrite 여부와 무관하게 피하고, 고른 경로를 여기에 더한다.
     """
+    from .image_sequence import media_stem   # utils 는 순수 유틸이라 지연 import (순환 방지)
     src = Path(src)
+    stem = media_stem(src)
     base_dir = Path(out_dir) if out_dir else src.parent
     if not ext.startswith("."):
         ext = "." + ext
@@ -121,11 +125,11 @@ def make_output_path(src: Path, out_dir: Path | None, suffix: str, ext: str, ove
         key = normcase_path(c)
         return key != src_key and key not in used and (overwrite or not c.exists())
 
-    candidate = base_dir / f"{src.stem}{suffix}{ext}"
+    candidate = base_dir / f"{stem}{suffix}{ext}"
     n = 0
     while not free(candidate):
         n += 1
-        candidate = base_dir / f"{src.stem}{suffix}_{n:03d}{ext}"
+        candidate = base_dir / f"{stem}{suffix}_{n:03d}{ext}"
     used.add(normcase_path(candidate))
     return candidate
 

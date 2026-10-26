@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-23
+# last Update date : 2026-10-26
 """Draw 탭 (PLAN_DRAW_TAB 5장, 13장, 16 ~ 20장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QGroup
 
 from ..config import constants as C
 from ..config.settings import AppSettings
+from ..core import image_sequence
 from ..core.drawing import DrawingDocument, DrawingFormatError, Stroke, legacy_sidecar_path, sidecar_path
 from ..core.frame_decoder import normalize_scale
 from .widgets.draw.geometry import normalize_zoom, zoom_label
@@ -375,7 +376,7 @@ class DrawTab(QWidget):
         item = self.controller.item()
         if item is None:
             return ""
-        return item.path.name + ("*" if self.doc is not None and self.doc.dirty else "")
+        return image_sequence.display_name(item.path) + ("*" if self.doc is not None and self.doc.dirty else "")
 
     def set_active(self, active: bool) -> None:
         self._active = active
@@ -581,7 +582,7 @@ class DrawTab(QWidget):
         if row < 0:
             return
         self.model.set_info(row, None, error)
-        self.log.append_error(f"[{path.name}] Probe failed: {error}")
+        self.log.append_error(f"[{image_sequence.display_name(path)}] Probe failed: {error}")
         if self.view.currentIndex().row() == row:
             self.canvas.clear(f"Cannot open this file: {error}")
 
@@ -662,7 +663,7 @@ class DrawTab(QWidget):
         spec = self.provider.spec
         if spec is not None:
             fps = f"{info.fps:.3f}".rstrip("0").rstrip(".")
-            self.log.append(f"{item.path.name} — {info.width}x{info.height}, {fps} fps, "
+            self.log.append(f"{image_sequence.display_name(item.path)} — {info.width}x{info.height}, {fps} fps, "
                             f"{info.frame_count} frames. Decoding at {spec.out_w}x{spec.out_h}. "
                             f"Cache holds about {self.provider.cache_capacity()} frames; the whole video needs "
                             f"{format_gib(info.frame_count * spec.frame_bytes)}.")
@@ -698,7 +699,7 @@ class DrawTab(QWidget):
     # ================================================================== 프레임 캐시
     def _video_name(self) -> str | None:
         item = self.controller.item()
-        return item.path.name if item is not None else None
+        return image_sequence.display_name(item.path) if item is not None else None
 
     def _refresh_cache_ui(self) -> None:
         p = self.provider
@@ -802,13 +803,14 @@ class DrawTab(QWidget):
         spec = p.spec
         if item is None or spec is None:
             return
-        if p.filling_name() == item.path.name:
+        if p.filling_name() == image_sequence.display_name(item.path):
             p.cancel_full_cache()
             return
         a, b = self._cache_range
         whole_video = self._range_is_whole()
         frames = b - a + 1
-        label = item.path.name if whole_video else f"{item.path.name} frames {a}-{b}"
+        name = image_sequence.display_name(item.path)
+        label = name if whole_video else f"{name} frames {a}-{b}"
         if p.pinned_complete() or p.pinned_in(a, b) >= frames:
             self.log.append(f"{label} is already fully cached.")
             return

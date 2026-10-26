@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-26
 """영상 계열 변환기(GIF · MP4 …)가 공유하는 옵션 필드와 헬퍼."""
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import constants as C
+from .. import image_sequence
 from ..models import ConvertOptions, VideoItem
 from ..utils import fit_size, resolve_dimensions
 
@@ -57,16 +58,16 @@ def output_dimensions(item: VideoItem, o: VideoOptions) -> tuple[int, int]:
 
 
 def input_args(item: VideoItem, o: VideoOptions) -> list[str]:
-    """[-hwaccel auto] [-ss -t] -i <src>  — 구간이 전체면 seek 생략."""
+    """[-hwaccel auto] [-ss -t] -i <src>  — 구간이 전체면 seek 생략. 이미지 시퀀스는 image2 패턴 입력 (GPU 디코드 없음)."""
     assert item.info is not None
     args: list[str] = []
-    if o.hwaccel == "auto":
+    if o.hwaccel == "auto" and not item.info.sequence:
         args += ["-hwaccel", "auto"]
     rng = item.effective_range()
     if not rng.is_full(item.info):
         start_sec, dur_sec = rng.to_seconds(item.info.fps)
         args += ["-ss", f"{start_sec:.3f}", "-t", f"{dur_sec:.3f}"]
-    args += ["-i", str(item.path)]
+    args += image_sequence.input_args(item.path, item.info.fps)
     return args
 
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-16
+# last Update date : 2026-10-26
 """QSettings 래퍼 (PLAN 6.12). 포맷별 옵션은 `<format_id>/options_json` 한 키에 JSON 으로 저장한다."""
 from __future__ import annotations
 
@@ -64,6 +64,18 @@ class AppSettings:
     @estimate_enabled.setter
     def estimate_enabled(self, v: bool) -> None:
         self.set("estimate/enabled", bool(v))
+
+    @property
+    def sequence_fps(self) -> float:
+        try:
+            v = float(self.get("sequence/fps", C.SEQUENCE_FPS_DEFAULT, float))
+        except (TypeError, ValueError):
+            return C.SEQUENCE_FPS_DEFAULT
+        return v if C.SEQUENCE_FPS_MIN <= v <= C.SEQUENCE_FPS_MAX else C.SEQUENCE_FPS_DEFAULT
+
+    @sequence_fps.setter
+    def sequence_fps(self, v: float) -> None:
+        self.set("sequence/fps", max(C.SEQUENCE_FPS_MIN, min(C.SEQUENCE_FPS_MAX, float(v))))
 
     # ------------------------------------------------------------------ 포맷별 옵션
     def load_options(self, converter: BaseConverter, prefix: str = "") -> ConvertOptions:

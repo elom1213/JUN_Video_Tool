@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """전역 상수 · 품질 매핑 · 휴리스틱 계수.
 
 PySide6 를 import 하지 않는다 (core 와 테스트에서 공유).
@@ -22,8 +22,17 @@ AUDIO_EXTENSIONS: frozenset[str] = frozenset({
     ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wma",
     ".aif", ".aiff", ".ac3", ".amr", ".caf", ".mka", ".3gp",
 })
-SUPPORTED_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS   # Convert 탭
-DRAW_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS                        # Draw 탭 (그림은 영상 위에만)
+# 이미지 시퀀스 (img.001.jpg …) — 번호가 이어지는 파일들을 영상 한 개로 다룬다 (core/image_sequence.py)
+IMAGE_EXTENSIONS: frozenset[str] = frozenset({
+    ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".tga", ".exr", ".dpx", ".webp",
+})
+SUPPORTED_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | IMAGE_EXTENSIONS   # Convert 탭
+DRAW_EXTENSIONS: frozenset[str] = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS      # Draw 탭 (그림은 영상 위에만)
+
+# 이미지에는 fps 가 없으므로 시퀀스의 시간축은 이 값 (설정 `sequence/fps`, Settings 다이얼로그)
+SEQUENCE_FPS_DEFAULT = 24.0
+SEQUENCE_FPS_MIN = 1.0
+SEQUENCE_FPS_MAX = 120.0
 
 # 음성 전용 파일의 구간 단위. 프레임이 없으므로 1 ms 를 한 "프레임" 으로 친다 (FrameRange · 진행률 계산 공용)
 AUDIO_TIMELINE_FPS = 1000.0

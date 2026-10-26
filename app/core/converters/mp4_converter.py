@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
+# last Update date : 2026-10-26
 """MP4 (H.264) 변환기 (PLAN 5.9): 재인코딩 · 리사이즈 · 구간 자르기 · fps 변경 · 오디오 처리."""
 from __future__ import annotations
 
@@ -85,7 +85,10 @@ class Mp4Converter(BaseConverter):
         if o.fps_mode == "custom" and abs(fps - info.fps) > 1e-3:
             filters.append(f"fps={fmt_fps(fps)}")
         w, h = scale_args(item, o)
-        if w is not None or h is not None:
+        if w is None and h is None and (info.width % 2 or info.height % 2):
+            # 홀수 크기 원본 (이미지 시퀀스에 흔하다) — yuv420p 는 짝수만 받으므로 한 픽셀 줄인다
+            filters.append(f"scale={even(info.width)}:{even(info.height)}:flags=lanczos")
+        elif w is not None or h is not None:
             # 락 해제로 정확한 값을 줄 때도 짝수로 보정 (yuv420p). -2 는 ffmpeg 가 알아서 짝수로 맞춘다
             ws = str(even(w)) if (w is not None and w > 0) else str(w)
             hs = str(even(h)) if (h is not None and h > 0) else str(h)

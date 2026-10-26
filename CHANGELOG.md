@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.8 — 2026-10-26
+
+- **이미지 시퀀스를 영상 한 개로**: `img.001.jpg, img.002.jpg …` 처럼 번호가 이어지는 이미지 (jpg · jpeg · png · bmp · tif · tiff ·
+  tga · exr · dpx · webp) 를 드래그&드롭 · `Add Files` · `Add Folder` 로 넣으면 리스트에 `img.[001-120].jpg` 한 항목이 생긴다.
+  Convert 탭의 GIF · MP4 변환 · 구간 · 용량 추정, Draw 탭의 프레임 이동 · 재생 · 캐시 · 그리기 · 사이드카 · 내보내기가 일반 영상과 같다.
+  - 프레임을 다 놓든 한 장만 놓든 시퀀스 전체 (첫 프레임이 항목 경로). 번호가 빈 곳에서 나뉜다 (ffmpeg image2 와 같은 규칙).
+  - 자리 수는 첫 프레임 표기를 따른다 (`001` → `%03d`, `1` → `%d`). 파일 이름의 `%` 는 `%%` 로 넘긴다.
+  - fps 는 `Edit > Settings… > Image sequence FPS` (기본 24, 설정 `sequence/fps`). 바꾸면 그 뒤에 넣는 시퀀스부터.
+  - 리스트 정보 `Image sequence · 48 frames · 640x360 · 24 fps · …`. 출력 이름은 번호를 뗀 이름 (`img_gif.gif`, 번호뿐이면 폴더 이름).
+  - 시퀀스는 GPU 디코드(`-hwaccel`)를 쓰지 않는다. 오디오 없음 (WAV 변환은 `no audio stream` 으로 건너뜀).
+- MP4: 크기를 안 바꿔도 원본이 홀수 크기면 짝수로 한 픽셀 줄인다 (yuv420p 는 홀수를 못 받는다 — 이미지에 흔하다).
+- `core/image_sequence.py` (`collapse` · `sequence_of` · `input_args` · `display_name` · `media_stem`), `media_probe.sequence_info`,
+  `MediaInfo.sequence`, 상수 `IMAGE_EXTENSIONS` · `SEQUENCE_FPS_*`. ffmpeg 입력은 모두 `input_args` 를 거친다
+  (변환 · 썸네일 · Draw 디코더 · burn-in). `tests/test_image_sequence.py` 10개, `dev/check_draw.py` [16].
+
 ## 0.4.7 — 2026-10-23
 
 - **Draw 탭이 영상별 보기 상태를 기억한다**: 다른 영상으로 바꾸면 떠나는 영상의 **정지 프레임 · 타임라인 확대 구간 · 캐시 구간 ·

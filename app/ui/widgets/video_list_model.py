@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-20
+# last Update date : 2026-10-26
 """영상 목록 모델 (PLAN 6.2)."""
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, Signal, QPersist
 from PySide6.QtGui import QPixmap
 
 from ...config import constants as C
+from ...core import image_sequence
 from ...core.models import ItemStatus, MediaInfo, VideoItem
 from ...core.utils import format_duration, human_size, normcase_path
 
@@ -32,6 +33,9 @@ def info_text(info: MediaInfo | None, error: str | None = None) -> str:
         return error or "Probing…"
     if info.audio_only:
         return (f"Audio {info.codec} · {_audio_text(info)} · "
+                f"{format_duration(info.duration)} · {human_size(info.size_bytes)}")
+    if info.sequence:
+        return (f"Image sequence · {info.frame_count} frames · {info.width}x{info.height} · {_fps_text(info.fps)} fps · "
                 f"{format_duration(info.duration)} · {human_size(info.size_bytes)}")
     return (f"{info.width}x{info.height} · {_fps_text(info.fps)} fps · "
             f"{format_duration(info.duration)} · {human_size(info.size_bytes)}")
@@ -79,7 +83,7 @@ class VideoListModel(QAbstractListModel):
             return None
         it = self._items[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
-            return it.path.name
+            return image_sequence.display_name(it.path)
         if role == Qt.ItemDataRole.CheckStateRole:
             if not self._checkable:
                 return None
@@ -160,11 +164,13 @@ class VideoListModel(QAbstractListModel):
     # ------------------------------------------------------------------ 편집
     def add_paths(self, paths: Iterable[Path]) -> tuple[int, int]:
         added_rows: list[int] = []
-        skipped = 0
         new_items: list[VideoItem] = []
-        for p in paths:
-            p = Path(p)
-            if p.suffix.lower() not in self._extensions or not p.is_file():
+        paths = [Path(p) for p in paths]
+        supported = [p for p in paths if p.suffix.lower() in self._extensions]
+        skipped = len(paths) - len(supported)
+        # 같은 시퀀스의 프레임들(img.001 ~ img.120)은 첫 프레임 한 항목으로 모은다 (모인 프레임은 건너뜀으로 세지 않는다)
+        for p in image_sequence.collapse(supported):
+            if not p.is_file():
                 skipped += 1
                 continue
             key = normcase_path(p)

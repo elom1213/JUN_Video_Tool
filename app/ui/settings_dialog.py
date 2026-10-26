@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-14
-"""설정 다이얼로그 (PLAN 6.12): 동시 변환 수 · 하드웨어 디코드 · 추정 on/off."""
+# last Update date : 2026-10-26
+"""설정 다이얼로그 (PLAN 6.12): 동시 변환 수 · 하드웨어 디코드 · 추정 on/off · 이미지 시퀀스 fps."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QSpinBox,
-                               QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLabel,
+                               QSpinBox, QVBoxLayout)
 
 from ..config import constants as C
 from ..config.settings import AppSettings
@@ -33,10 +33,19 @@ class SettingsDialog(QDialog):
         self.estimate_check.setChecked(settings.estimate_enabled)
         self.estimate_check.setToolTip("When off, only the quick rough estimate is shown.")
 
+        self.sequence_fps_spin = QDoubleSpinBox()
+        self.sequence_fps_spin.setRange(C.SEQUENCE_FPS_MIN, C.SEQUENCE_FPS_MAX)
+        self.sequence_fps_spin.setDecimals(3)
+        self.sequence_fps_spin.setSuffix(" fps")
+        self.sequence_fps_spin.setValue(settings.sequence_fps)
+        self.sequence_fps_spin.setToolTip("Frame rate for image sequences (img.001.jpg, img.002.jpg, ...).\n"
+                                          "Applies to sequences added after the change; re-add a sequence to update it.")
+
         form = QFormLayout()
         form.addRow("Parallel conversions", self.concurrency_spin)
         form.addRow("Hardware decode", self.hwaccel_combo)
         form.addRow("", self.estimate_check)
+        form.addRow("Image sequence FPS", self.sequence_fps_spin)
 
         note = QLabel("Changes apply to the next conversion.")
         note.setObjectName("HintLabel")
@@ -54,5 +63,6 @@ class SettingsDialog(QDialog):
         self._settings.concurrency = self.concurrency_spin.value()
         self._settings.hwaccel = str(self.hwaccel_combo.currentData())
         self._settings.estimate_enabled = self.estimate_check.isChecked()
+        self._settings.sequence_fps = self.sequence_fps_spin.value()
         self._settings.sync()
         super().accept()
