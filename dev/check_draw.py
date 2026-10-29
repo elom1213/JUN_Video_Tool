@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-26
+# last Update date : 2026-10-29
 """Draw 탭 통합 검증 (PLAN_DRAW_TAB 9.2, 12장, 13.8). 오프스크린 Qt 로 실제 위젯을 돌린다.
 
     python dev/check_draw.py [--keep]
@@ -843,6 +843,39 @@ def main() -> int:
         check(cv2.is_view_default(), "clear() resets the view")
         d2._load_video(d2._row)
         pump(app, 3, lambda: cv2._image is not None)
+
+        print("[14b] view zoom with Ctrl + + / Ctrl + - (v0.4.9)")
+        d2.reset_view()
+        cv2.window().activateWindow()
+        cv2.setFocus()
+        pump(app, 0.1)
+
+        def rel_center() -> tuple[float, float]:
+            """위젯 가운데가 영상의 어느 비율 자리를 보는지."""
+            r = cv2.video_rect()
+            return ((cv2.width() / 2.0 - r.x()) / r.width(), (cv2.height() / 2.0 - r.y()) / r.height())
+
+        mid0 = rel_center()
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        QTest.keyClick(cv2, Qt.Key.Key_Equal, ctrl)
+        pump(app, 0.05)
+        check(abs(cv2.view_zoom() - 1.25) < 1e-9, f"Ctrl+= zooms in one wheel step ({cv2.view_zoom()})")
+        QTest.keyClick(cv2, Qt.Key.Key_Plus, ctrl | Qt.KeyboardModifier.KeypadModifier)
+        pump(app, 0.05)
+        check(abs(cv2.view_zoom() - 1.25 ** 2) < 1e-9, f"Ctrl+(keypad +) zooms in again ({cv2.view_zoom()})")
+        mid1 = rel_center()
+        check(abs(mid1[0] - mid0[0]) < 1e-6 and abs(mid1[1] - mid0[1]) < 1e-6,
+              f"keyboard zoom keeps the center fixed {mid0} -> {mid1}")
+        QTest.keyClick(cv2, Qt.Key.Key_Minus, ctrl)
+        QTest.keyClick(cv2, Qt.Key.Key_Minus, ctrl)
+        pump(app, 0.05)
+        check(cv2.view_zoom() == 1.0 and cv2.is_view_default(), f"Ctrl+- twice -> back to fit ({cv2.view_zoom()})")
+        QTest.keyClick(cv2, Qt.Key.Key_Minus, ctrl)
+        pump(app, 0.05)
+        check(abs(cv2.view_zoom() - 0.8) < 1e-9, f"Ctrl+- below fit -> 80 % ({cv2.view_zoom()})")
+        check("Zoom View In" in [a.text() for a in d2.menu_actions() if a]
+              and d2.act_view_zoom_in.isEnabled() and d2.act_view_zoom_out.isEnabled(), "menu has Zoom View In / Out")
+        d2.reset_view()
 
         print("[15] per-video view state survives switching videos")
         src_a = tmp / "testsrc.mp4"          # [14] 가 src 를 좌표로 덮었다

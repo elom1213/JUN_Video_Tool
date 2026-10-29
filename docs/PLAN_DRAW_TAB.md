@@ -695,7 +695,7 @@ QToolButton#Swatch:checked { border: 2px solid #ffffff; }
 | 좌버튼 드래그 | 툴이 `draw` 면 스트로크, `erase` 면 지우기. 재생 중이면 먼저 정지 |
 | 가운데 버튼 드래그 | 스크럽 (감도 `draw/scrub_px`, 2~40 px/frame). 툴과 무관 |
 | 우버튼 | 아무것도 안 함 → v0.4.6 부터 드래그 = 보기 이동, 더블클릭 = 보기 되돌림 (19장) |
-| 휠 | (v0.4.6) 커서 자리를 고정한 채 보기 확대 · 축소 (19장) |
+| 휠 | (v0.4.6) 커서 자리를 고정한 채 보기 확대 · 축소 (19장). 키보드 `Ctrl + +` / `Ctrl + -` 는 가운데 기준 (21장) |
 
 - 툴바 `Tool: (● Draw ○ Erase)`, 단축키 `D` / `E`. `S`(Scrub Tool) 는 없다. 설정 키 `draw/tool`.
 - 사이드 패널의 `Scrub` 그룹은 남긴다(라벨 `Middle-drag sensitivity`).
@@ -1016,3 +1016,15 @@ EXPORT_SUFFIX = "_draw"
 검증: `dev/check_draw.py` [15] — 영상 A 를 123 프레임 · 타임라인 50-70 · 캐시 10-200 · 휠 2칸(156 %) 으로 두고 B 로 바꾸면 B 는 0 프레임 · 전체,
 B 를 40 프레임 · 100-150 으로 두고 A 로 돌아오면 A 의 네 값이 모두 복원되고 로그 한 줄, 다시 B 는 40 · 100-150 · 맞춤,
 B 재생 중에 A 로 바꾸면 정지되고 돌아오면 그 순간 프레임에서 정지, B 를 지우면 A 복원 · 다시 넣은 B 는 처음부터, `Clear List` 뒤 `_view_states` 비어 있음.
+
+## 21. 2026-10-29 추가 요청 (v0.4.9) — `Ctrl + +` / `Ctrl + -` 보기 확대 · 축소
+
+| # | 요청 | 구현 |
+|---|------|------|
+| C10 | Draw 탭에서 `Ctrl +` · `Ctrl -` 로도 화면 확대 · 축소 | 액션 `act_view_zoom_in`(`Ctrl+=` · `Ctrl++`) · `act_view_zoom_out`(`Ctrl+-`) → `canvas.set_view_zoom(view_zoom() × / ÷ DRAW_VIEW_ZOOM_STEP)`, anchor 없음 = **위젯 가운데** 고정. 범위 · 클램프 · `view_changed` 는 휠과 같은 경로 |
+
+- `Ctrl+=` 는 US 배열에서 `+` 와 같은 키를 Shift 없이 누른 것, `Ctrl++` 는 숫자 키패드 `+` 와 `Ctrl+Shift+=` 를 받는다. 둘 다 등록.
+- 단축키 문맥은 다른 Draw 액션과 같은 `WidgetWithChildrenShortcut` (2.4) — Convert 탭에는 영향 없음.
+- 메뉴 `Draw` 의 `Reset View Zoom` 앞에 `Zoom View In` / `Zoom View Out`. 영상이 열려 있을 때만 활성.
+
+검증: `dev/check_draw.py` [14b] — `Ctrl+=` 1.25, 키패드 `Ctrl++` 1.5625, 가운데가 보는 영상 자리 (0.5, 0.5) 유지, `Ctrl+-` 두 번이면 정확히 1.0 · 기본, 한 번 더면 80 %, 메뉴 · 활성 상태. (같은 실행에서 [9] · [10] · [12] 캐시 항목 14개는 개발 PC 여유 메모리 5.3 GiB → 캐시 예산 0.70 GiB < 필요 1.03 GiB 라 실패 — 이번 변경과 무관.)

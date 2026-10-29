@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Python Script by Ji Hun Park
-# last Update date : 2026-10-26
+# last Update date : 2026-10-29
 """Draw 탭 (PLAN_DRAW_TAB 5장, 13장, 16 ~ 20장).
 
 영상을 리스트업해 고르고, 프레임 단위로 재생 · 정지 · 이동하면서 멈춘 프레임 위에 선을 그린다.
@@ -161,6 +161,13 @@ class DrawTab(QWidget):
         self.act_view_reset = self._act(None, "Reset View Zoom", "F", self.reset_view)
         self.act_view_reset.setToolTip("Reset View Zoom (F). Mouse wheel over the video zooms around the cursor, "
                                        "right-drag pans, right double-click resets")
+        # 키보드 확대 · 축소 (v0.4.9). 화면 가운데 기준, 휠 한 칸과 같은 배율.
+        # Ctrl+= 는 US 배열에서 + 와 같은 키 (Shift 없이), Ctrl++ 는 숫자 키패드 + 와 Shift+= 를 받는다.
+        self.act_view_zoom_in = self._act(None, "Zoom View In", None, self.zoom_view_in)
+        self.act_view_zoom_in.setShortcuts([QKeySequence("Ctrl+="), QKeySequence("Ctrl++")])
+        self.act_view_zoom_out = self._act(None, "Zoom View Out", "Ctrl+-", self.zoom_view_out)
+        self.act_view_zoom_in.setToolTip("Zoom View In (Ctrl + +). Zooms around the center of the video")
+        self.act_view_zoom_out.setToolTip("Zoom View Out (Ctrl + -). Zooms around the center of the video")
 
         self.act_undo = self._act("undo", "Undo", "Ctrl+Z", self.undo)
         self.act_redo = self._act("redo", "Redo", "Ctrl+Y", self.redo)
@@ -363,7 +370,7 @@ class DrawTab(QWidget):
         return [self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                 self.act_last, self.act_prev_drawn, self.act_next_drawn, None,
                 self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v,
-                self.act_view_reset, None,
+                self.act_view_zoom_in, self.act_view_zoom_out, self.act_view_reset, None,
                 self.act_undo, self.act_redo, self.act_clear_frame, self.act_clear_all, None,
                 self.act_save, self.act_save_as, self.act_load, self.act_export, None,
                 self.act_cache_whole, self.act_free_cache, self.act_zoom_cache, self.act_zoom_reset, None,
@@ -477,6 +484,8 @@ class DrawTab(QWidget):
                     self.act_tool_draw, self.act_tool_erase, self.act_ghost, self.act_flip_h, self.act_flip_v):
             act.setEnabled(a)
         self.act_view_reset.setEnabled(a and not self.canvas.is_view_default())
+        self.act_view_zoom_in.setEnabled(a and has_video)
+        self.act_view_zoom_out.setEnabled(a and has_video)
         for act in (self.act_play, self.act_prev, self.act_next, self.act_back10, self.act_fwd10, self.act_first,
                     self.act_last, self.act_save_as, self.act_load, self.act_export):
             act.setEnabled(a and has_video)
@@ -1031,6 +1040,14 @@ class DrawTab(QWidget):
 
     def reset_view(self) -> None:
         self.canvas.reset_view()
+
+    def zoom_view_in(self) -> None:
+        """Ctrl++ : 화면 가운데 기준 한 단계 확대 (휠 한 칸과 같은 배율)."""
+        self.canvas.set_view_zoom(self.canvas.view_zoom() * C.DRAW_VIEW_ZOOM_STEP)
+
+    def zoom_view_out(self) -> None:
+        """Ctrl+- : 화면 가운데 기준 한 단계 축소."""
+        self.canvas.set_view_zoom(self.canvas.view_zoom() / C.DRAW_VIEW_ZOOM_STEP)
 
     def _view_changed(self) -> None:
         self.act_view_reset.setEnabled(self._active and not self.canvas.is_view_default())

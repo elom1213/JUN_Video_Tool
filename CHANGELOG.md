@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.9 — 2026-10-29
+
+- **Draw 탭 키보드 확대 · 축소**: `Ctrl + +` (`Ctrl+=` · 숫자 키패드 `+`) 로 확대, `Ctrl + -` 로 축소. 휠 한 칸과 같은 1.25 배씩,
+  범위도 같다 (25 % ~ 1600 %). 휠은 커서 자리를 고정하지만 키보드는 **화면 가운데**를 고정한다. 되돌리기는 그대로 `F`.
+  - `Draw > Zoom View In` / `Zoom View Out` 메뉴 (`Reset View Zoom` 앞). 영상이 열려 있을 때만 활성.
+  - 다른 단축키처럼 Draw 탭 안에 포커스가 있을 때만 작동한다.
+- `DrawTab.zoom_view_in` · `zoom_view_out`, `dev/check_draw.py` [14b]. PLAN_DRAW_TAB 21.
+
 ## 0.4.8 — 2026-10-26
 
 - **이미지 시퀀스를 영상 한 개로**: `img.001.jpg, img.002.jpg …` 처럼 번호가 이어지는 이미지 (jpg · jpeg · png · bmp · tif · tiff ·
